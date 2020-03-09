@@ -1,11 +1,17 @@
 # pharo-support
-A set of scripts for installing & configuring Pharo (Linux & Windows packages)
+Miscellaneous scripts for installing & configuring Pharo applications & software
 
 ### Pharo-Launcher Installer
 
-This script automates the installation of `Pharo-Launcher` in Linux.  It does not rely on or take advantage of a cached PharoLauncher TGZ package; it assumes you have already downloaded a PharoLauncher zip file.
+This script automates the installation of `Pharo-Launcher` in Linux.  It's primary value-add is that it creates a `.desktop` launcher file that can be used to put an icon in the dock to make launching the app easier.
 
-To use the PharoLauncher installer script, download a `PharoLauncher` zip file from https://pharo.org (32-bit or 64-bit) and copy it to the directory you wish to use for your Pharo projects; I use `~/Pharo`.  Then copy the `install-pharolauncher.sh` script into the same directory and run it.  When run without any arguments, it will print a comprehensive usage and quit.  Adding `-n` or `-u` will trigger the actual installation: `$ bash install-pharolauncher.sh -u` -- you will likely be prompted for your password to enable `sudo` (as it will want to install 32-bit support libraries on 64-bit Ubuntu systems, which will allow you to run 32-bit Pharo images).
+To use the `PharoLauncher` installer script, download a `PharoLauncher` zip file from https://pharo.org (32-bit or 64-bit) and copy it to the directory you wish to use for your Pharo projects; I use `~/Pharo`.  Then copy the `install-pharolauncher.sh` script into the same directory and run it.  
+
+When run without any arguments, it will print a comprehensive usage and quit.  Adding `-n` or `-u` will trigger the actual installation: 
+
+`$ bash install-pharolauncher.sh -u`
+
+You will likely be prompted for your password to enable `sudo` (as it will want to install 32-bit support libraries on 64-bit Ubuntu systems, which will allow you to run 32-bit Pharo images).
 
 The `install-pharolauncher.sh` script will create a `pharolauncher` directory in the same location as the script, then unzip the contents of the downloaded zip file into this new directory.  The script will also create a "launcher" file (a `.desktop` file) and install it; this launcher can be found by searching for `pharo` in the `Show Applications` panel of Gnome.  Clicking the launcher icon will launch the Pharo-Launcher application.
 
