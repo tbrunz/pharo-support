@@ -1,4 +1,4 @@
-# installer_scripts
+# pharo-support
 A set of scripts for installing & configuring Pharo (Linux & Windows packages)
 
 ### Pharo-Launcher Installer
