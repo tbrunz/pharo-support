@@ -3,6 +3,8 @@ Miscellaneous scripts for installing & configuring Pharo applications & software
 
 ### Pharo-Launcher Installer
 
+#### Note: This script is currently being rewritten
+
 This bash shell script automates the installation of `Pharo-Launcher` in Linux.  It's primary value-add is that it creates a `.desktop` launcher file that can be used to put an icon in the dock to make launching the app easier.
 
 To use the `PharoLauncher` installer script, download a `PharoLauncher` zip file from https://pharo.org (32-bit or 64-bit) and copy it to the directory you wish to use for your Pharo projects; I use `~/Pharo`.  Then copy the `install-pharolauncher.sh` script into the same directory and run it.  
