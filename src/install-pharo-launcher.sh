@@ -28,8 +28,28 @@ USAGE_INSTALLER="[[-i] /inst/folder[/<inst.zip>]]"
 USAGE_DESTINATION="[[-d] /dest/folder]"
 USAGE_PROMPT="usage: ${THIS_APP} ${USAGE_INSTALLER} ${USAGE_DESTINATION}"
 
+UNZIP_APPLICATION=unzip
+REPO_INSTALL_APP=apt-get
+REPO_INSTALL_CMD=install
+
+TEMPORARY_DIRS=()
+
 
 ###############################################################################
+###############################################################################
+#
+# Function return codes
+#
+SUCCESS=0
+CANCEL=1
+BAD_SWITCH=2
+NOT_FOUND=3
+REJECTED=4
+NO_MATCH=5
+CANT_CREATE=6
+CMD_FAIL=7
+
+
 ###############################################################################
 #
 Display_Usage () {
@@ -85,17 +105,12 @@ ${USAGE_PROMPT}
 ###############################################################################
 ###############################################################################
 #
-# Function return codes
-#
-SUCCESS=0
-BAD_SWITCH=1
-
-
-###############################################################################
-#
 # This is the exit point for the script.
 #
 die () {
+    # Remove any temporary files & directories we may have created.
+    Remove_Temporaries
+
     # If no parameter is supplied, default to '1' (not '0').
     # Use 'exit $SUCCESS' (or 'exit Success') to quit with code True.
     [[ -z "${1}" ]] && exit 1
@@ -137,6 +152,24 @@ Display_Error () {
 
     # If $2 is defined, then quit the script, using $2 as the exit code.
     die $(( ${EXIT_SIGNAL} ))
+}
+
+
+###############################################################################
+#
+# Divest ourselves of any temporaries we created.
+#
+Remove_Temporaries () {
+    local THIS_DIR
+
+    # Did we create any temporary directories?
+    if (( ${#TEMPORARY_DIRS[@]} > 0 )); then
+
+        # Delete each one, and their contents, without care for errors.
+        for THIS_DIR in "${TEMPORARY_DIRS[@]}"; do
+            rm -rf "${THIS_DIR}"
+        done
+    fi
 }
 
 
@@ -249,22 +282,41 @@ Warn_If_Not_Pharo_Directory () {
 
 ###############################################################################
 #
-# Warn if the working directory appears to be a virtual machine directory.
+# Warn if a temporary directory could not be created
 #
-Warn_of_Virtual_Machine_Directory () {
-    local VM_DIRECTORY=${1}
-    local ERROR_MSG
+Warn_of_No_Temp_Directory () {
 
-    if [[ -n "${VM_DIRECTORY}" ]]; then
-        VM_DIRECTORY="'${VM_DIRECTORY}'"
-    else
-        VM_DIRECTORY="<argument not provided>"
-    fi
+    Display_Error "Cannot create a temporary directory (in /tmp)!"
+}
 
-    printf -v ERROR_MSG "%s " \
-        "Ignoring directory ${VM_DIRECTORY}: virtual machine directory?"
 
-    Display_Error "${ERROR_MSG}"
+###############################################################################
+#
+# Warn if an 'unzip' app was not found and could not be installed
+#
+Warn_of_No_Unzip_App () {
+
+    Display_Error "Cannot find or install an unzip application!"
+}
+
+
+###############################################################################
+#
+# Warn if a repository package manager could not be found
+#
+Warn_of_No_Repo_Install_App () {
+
+    Display_Error "Cannot find a package install application!"
+}
+
+
+###############################################################################
+#
+# Warn if the ZIP package file could not be unzipped
+#
+Warn_Cannot_Unzip_File () {
+
+    Display_Error "Cannot unzip the application ZIP file!"
 }
 
 
@@ -335,14 +387,319 @@ Ensure_is_Not_a_VM_Directory () {
 }
 
 
+############################################################################
+#
+# Display a prompt asking for a one-char response, repeat until a valid input
+#
+# Automatically appends the default to the prompt, capitalized.
+# Allows for a blank input, which is interpreted as the default.
+#
+# $1 = Default input (-x | x) | List of options | Prompt
+# $2 = list of [<options>] | Prompt
+# $3 = Prompt
+#
+# Returns 0 if input==default, 1 otherwise
+# The first character of the user's input, lowercased, goes into $REPLY
+#
+# Get_User_Choice --> "Continue? [Y/n]"
+# Get_User_Choice "<prompt>" --> "<prompt> [Y/n]"
+# Get_User_Choice (y|n|-y|-n) "<prompt>" --> "<prompt> ([Y/n]|[y/N])"
+#
+# Get_User_Choice "[<list>]" "<prompt>" --> "<prompt> [<list>]"
+#     No default; requires an input in the list, returned in $REPLY
+#
+# Get_User_Choice <def> "[<list>]" "<prompt>" --> "<prompt> [<list>]"
+#     Defaulted input; requires an input in the list, returned in $REPLY
+#
+Get_User_Choice () {
+    local OPTIONS
+    local DEFAULT="y"
+    local PROMPT
+
+    if (( $# == 0 )); then
+        PROMPT="Continue?"
+
+    elif (( $# == 1 )); then
+        PROMPT=${1}
+
+    elif (( $# == 2 )); then
+        PROMPT=${2}
+        DEFAULT=$( GetOpt "${1}" )
+
+        if [[ "${DEFAULT}" == "[" ]]; then
+            DEFAULT=
+            OPTIONS=${1}
+            OPTIONS=${OPTIONS##[}
+            OPTIONS=${OPTIONS%%]}
+        fi
+    else
+        PROMPT=${3}
+        DEFAULT=$( GetOpt "${1}" )
+        OPTIONS=${2}
+
+        if [[ "${DEFAULT}" == "[" ]]; then
+            DEFAULT=$( GetOpt "${2}" )
+            OPTIONS=${1}
+        fi
+
+        OPTIONS=${OPTIONS##[}
+        OPTIONS=${OPTIONS%%]}
+
+        isSubString "${DEFAULT}" "${OPTIONS}"
+        (( $? == 0 )) || DEFAULT=
+    fi
+
+    if [[ ${OPTIONS} ]]; then
+        OPTIONS=${OPTIONS,,}
+
+        if [[ ${DEFAULT} ]]; then
+            OPTIONS=${OPTIONS/${DEFAULT}/${DEFAULT^}}
+        fi
+
+        PROMPT=${PROMPT}" [${OPTIONS}] "
+    else
+        case ${DEFAULT} in
+        y )
+            PROMPT=${PROMPT}" [Y/n] "
+            ;;
+        n )
+            PROMPT=${PROMPT}" [y/N] "
+            ;;
+        * )
+            PROMPT=${PROMPT}" [${DEFAULT^}]"
+            ;;
+        esac
+    fi
+
+    unset REPLY
+    until [[ "${REPLY}" == "y" || "${REPLY}" == "n" ]]; do
+
+        read -e -r -p "${PROMPT}"
+
+        if [[ -z "${REPLY}" ]]
+        then
+            REPLY=${DEFAULT}
+        else
+            REPLY=$( GetOpt "${REPLY}" )
+            [[ "${REPLY}" == "/" ]] && REPLY=
+        fi
+
+        if [[ ${OPTIONS} && -n "${REPLY}" ]]; then
+            isSubString "${REPLY}" "${OPTIONS}"
+
+            if (( $? == 0 )); then return
+            else REPLY=
+            fi
+        fi
+    done
+
+    [[ "${REPLY}" == "y" ]]
+}
+
+
+###############################################################################
+#
+Ensure_Unzip_Installed () {
+
+    # To unzip the installer ZIP file, we need an 'unzip' application.
+    which "${UNZIP_APPLICATION}" &> /dev/null
+
+    # If it's already installed, we're done.
+    (( $? == 0 )) && return
+
+    # Otherwise, see if we can install it.
+    which "${REPO_INSTALL_APP}" &> /dev/null
+
+    # We need a repo install app or we can't fix this situation.
+    (( $? == 0 )) || return $NOT_FOUND
+
+    # Ask the repo manager to install our unzip application.
+    "${REPO_INSTALL_APP}" "${REPO_INSTALL_CMD}" "${UNZIP_APPLICATION}"
+
+    # We need an unzip app or we can't fix this situation.
+    (( $? == 0 )) || return $NOT_FOUND
+
+    # Finally, verify that we installed what we intended.
+    which "${UNZIP_APPLICATION}" &> /dev/null
+}
+
+
 ###############################################################################
 ###############################################################################
 #
 Install_Pharo_Launcher () {
-    echo "installing to '${DESTINATION_PATH}' "
-    echo "searching for installers in "
-    for PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
-        echo "    '${PATH}' "
+
+    # Installing to ${DESTINATION_PATH}
+    echo "Installing '${INSTALL_CHOICE}' to '${DESTINATION_PATH}'... "
+
+}
+
+
+###############################################################################
+#
+Select_Install_Path () {
+    local OLD_PROMPT
+    local CANCEL_TEXT="<cancel>"
+
+    OLD_PROMPT=${PS3}
+    PS3="Which path to install?"
+
+    echo
+    echo "Please make a choice from among the following paths: "
+
+    select INSTALL_CHOICE in \
+        "${#INSTALLER_PATHS_INTERNAL[@]}" "${CANCEL_TEXT}"; do
+
+        [[ -n "${INSTALL_CHOICE}" ]] && break
+
+        echo "Just pick one of the listed options, okay? "
+    done
+
+    PS3=${OLD_PROMPT}
+
+    if [[ "${INSTALL_CHOICE}" == "${CANCEL_TEXT}" ]]; then
+        echo 1>&2 "Cancelling ... "
+        return $CANCEL
+    fi
+}
+
+
+###############################################################################
+#
+Choose_Target_Path () {
+    local NUMBER_OF_PATHS
+
+    # How many install paths did we resolve?
+    NUMBER_OF_PATHS=${#INSTALLER_PATHS_INTERNAL[@]}
+
+    # If no install paths were resolved, there's nothing to do!
+    if (( ${NUMBER_OF_PATHS} == 0 )); then
+
+        echo "Could not find anything to install!  Exiting..."
+        return $NOT_FOUND
+    fi
+
+    # If only one install path was resolved, ask if we should use it.
+    if (( ${NUMBER_OF_PATHS} == 1 )); then
+
+        echo "Found path '${INSTALLER_PATHS_DISPLAY}' "
+
+        Get_User_Choice -y "Use this path?"
+        (( $? == 0 )) || return $REJECTED
+    fi
+
+    # If multiple paths were resolved, provide a selection to choose from.
+    if (( ${NUMBER_OF_PATHS} > 1 )); then
+
+        Select_Install_Path
+        (( $? == 0 )) || return $CANCEL
+    fi
+}
+
+
+###############################################################################
+#
+Resolve_Directory_with_Zip () {
+
+    # If this path is not a directory, we can't resolve it.
+    [[ -d "${THIS_PATH}" ]] || return $NO_MATCH
+
+    #
+}
+
+
+###############################################################################
+#
+Resolve_Installer_Zip_File () {
+    local BASE_NAME
+    local ZIP_FILE_PATH
+
+    # If this path is not a file, we can't resolve it.
+    [[ -f "${THIS_PATH}" ]] || return $NO_MATCH
+
+    # Need the basename for pattern grepping.
+    BASE_NAME=$( basename "${THIS_PATH}" )
+
+    # If the file name doesn't end in '.zip', we can't resolve it.
+    [[ "${BASE_NAME##*.}" == "zip" ]] || return $NO_MATCH
+
+    # If this path doesn't match the grep pattern, we can't resolve it.
+    [[ "${BASE_NAME}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || return $NO_MATCH
+
+    # It's one of our zip files...  We need to have 'unzip' installed.
+    Ensure_Unzip_Installed || Warn_of_No_Unzip_App && die $NOT_FOUND
+
+    # We also need a temporary directory to unzip it into.
+    ZIP_FILE_PATH=${THIS_PATH}
+    THIS_PATH=$( mktemp -q -d )
+
+    # We need to have acquired a temp directory.
+    (( $? == 0 )) || Warn_of_No_Temp_Directory && die $CANT_CREATE
+
+    # Remember this directory path, so we can remove it when we're done.
+    TEMPORARY_DIRS+=( "${THIS_PATH}" )
+
+    # Unzip it, as we need a directory path.
+    "${UNZIP_APPLICATION}" "${ZIP_FILE_PATH}" -d "${THIS_PATH}"
+
+    # We need to have successfully unzipped the zip package.
+    (( $? == 0 )) || Warn_Cannot_Unzip_File && die $CMD_FAIL
+
+    # Since this worked, return with ${THIS_PATH} pointing to the
+    # directory containing the ZIP file contents; the caller will
+    # then proceed as though the file were already unzipped.
+}
+
+
+###############################################################################
+#
+Resolve_Directory_with_Unzipped () {
+    echo "${USAGE_PROMPT}"
+}
+
+
+###############################################################################
+#
+Resolve_Unzipped_Directory () {
+    echo "${USAGE_PROMPT}"
+}
+
+
+###############################################################################
+#
+Resolve_Installers () {
+    # Start a list of installation candidates, as there may be more than one.
+    # We need two arrays for paths: one to show the user, one which is the
+    # path to the expanded/located/resolved target directory.
+    INSTALLER_PATHS_DISPLAY=()
+    INSTALLER_PATHS_INTERNAL=()
+
+    # Search for installer zip files, or folders of Pharo Launcher files.
+    for THIS_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
+
+        # Filter 1 = If we can't read it, we can't use it!
+        [[ ! -r "${THIS_PATH}" ]] && continue
+
+        # For each test, below, evaluate the indicated condition. Either
+        # the condition doesn't apply (return), or, if it does, the call
+        # will reduce it to one of the following, and adjust ${THIS_PATH}.
+
+        # Test 1 = Is this path a directory containing an installer zip?
+        Resolve_Directory_with_Zip "${THIS_PATH}"
+
+        # Test 2 = Is this path an installer zip file?
+        Resolve_Installer_Zip_File "${THIS_PATH}"
+
+        # Test 3 = Is this path a directory containing the expanded zip dir?
+        Resolve_Directory_with_Unzipped "${THIS_PATH}"
+
+        # Test 4 = Is this path the expanded zip file directory?
+        Resolve_Unzipped_Directory "${THIS_PATH}"
+        (( $? == 0 )) && continue
+
+        # Test 5 = Is this path a previously-installed launcher directory?
+        Resolve_Pharo_Launcher_Directory "${THIS_PATH}"
+        (( $? == 0 )) && continue
     done
 }
 
@@ -513,7 +870,14 @@ Main () {
     [[ -n "${INSTALLER_PATH}" ]] && \
         INSTALLER_SEARCH_PATHS=( "${INSTALLER_PATH}" )
 
-    # At this point, we have a valid command line, so install.
+    # Use the search path list to find one or more installation candidates.
+    Resolve_Installers
+
+    # Ask the user to select one of the install paths.
+    Choose_Target_Path
+    (( $? == 0 )) || return $CANCEL
+
+    # Using the list of candidates, install per the user's wishes.
     Install_Pharo_Launcher
 }
 
