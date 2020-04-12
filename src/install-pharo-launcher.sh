@@ -525,38 +525,127 @@ Ensure_Unzip_Installed () {
 
 
 ###############################################################################
-###############################################################################
 #
-Install_Pharo_Launcher () {
+# Push the search/display paths onto "the stack".
+#
+# This uses 4 globals: 2 inputs and 2 state variables.
+#
+Push_Search_Paths () {
 
-    # Installing to ${DESTINATION_PATH}
-    echo "Installing '${INSTALL_CHOICE}' to '${DESTINATION_PATH}'... "
-
+    # Bash makes pushing something on the end of an array trivial...
+    STACK_OF_SEARCH_PATHS+=( "${THIS_SEARCH_PATH}" )
+    STACK_OF_DISPLAY_PATHS+=( "${THIS_DISPLAY_PATH}" )
 }
 
 
 ###############################################################################
 #
-Select_Install_Path () {
+# Pop the search/display paths from "the stack".
+#
+# This uses 4 globals: 2 inputs and 2 state variables.
+#
+Pop_Search_Paths () {
+    local HEAD_INDEX
+
+    # Set the "return values" to nil, in case the stack is empty.
+    THIS_SEARCH_PATH=
+    THIS_DISPLAY_PATH=
+
+    # Get the index of the last element in the stack array.
+    HEAD_INDEX=$(( ${#STACK_OF_SEARCH_PATHS[@]} - 1 ))
+
+    # If the stack has nothing in it, we're done.
+    (( ${HEAD_INDEX} >= 0 )) || return $NOT_FOUND
+
+    # Take the last items off the stacks.
+    THIS_SEARCH_PATH=${STACK_OF_SEARCH_PATHS[ ${HEAD_INDEX} ]}
+    THIS_DISPLAY_PATH=${STACK_OF_DISPLAY_PATHS[ ${HEAD_INDEX} ]}
+
+    # To remove from an array, 'unset' the element.
+    unset STACK_OF_SEARCH_PATHS[${HEAD_INDEX}]
+    unset STACK_OF_DISPLAY_PATHS[${HEAD_INDEX}]
+}
+
+
+###############################################################################
+###############################################################################
+#
+# Now that we have a chosen installation directory, install it.
+#
+Install_Pharo_Launcher () {
+
+    # Installing to ${DESTINATION_PATH}
+    echo "Installing '${INSTALL_PATH}' to '${DESTINATION_PATH}'... "
+
+}
+
+
+###############################################################################
+###############################################################################
+#
+# Given $INSTALL_CHOICE, a path in $INSTALLER_PATHS_DISPLAY, set
+# $INSTALL_PATH from the corresponding path in $INSTALLER_PATHS_FOUND.
+#
+Get_Found_Path_From_Display_Path () {
+    local INDEX
+
+    # The list we're going to look through must not be empty.
+    (( ${#INSTALLER_PATHS_DISPLAY[@]} > 0 )) || return $NOT_FOUND
+
+    # Loop through the array of candidate paths by index rather than by
+    # element; we need to index for parallel list access.
+    for (( INDEX=0; INDEX<${#INSTALLER_PATHS_DISPLAY[@]}; INDEX++ )); do
+
+        # The user set $INSTALL_CHOICE based on a string in the DISPLAY list.
+        # If his choice fails to match this element, go on to the next one.
+        [[ "${INSTALLER_PATHS_DISPLAY[${INDEX}]}" == "${INSTALL_CHOICE}" ]] || \
+            continue
+
+        # We have a match; the index to the match also indexes the other list.
+        INSTALL_PATH=${INSTALLER_PATHS_FOUND[${INDEX}]}
+        return $SUCCESS
+    done
+
+    # If we got this far, we've exhausted the list and failed to find a match.
+    return $NOT_FOUND
+}
+
+
+###############################################################################
+#
+# Put up a menu of found installers/launchers & let the user choose one.
+#
+# Global $INSTALL_CHOICE is the return, a path from $INSTALLER_PATHS_DISPLAY.
+# Non-zero return means the user cancelled the installation.
+#
+Select_From_Menu_of_Multiple_Paths () {
     local OLD_PROMPT
     local CANCEL_TEXT="<cancel>"
 
+    # Preserve $PS3, then set it to prompt for our menu choice.
     OLD_PROMPT=${PS3}
     PS3="Which path to install?"
 
+    # Dialog boxes need a title...
     echo
     echo "Please make a choice from among the following paths: "
 
+    # Use the list in $INSTALLER_PATHS_DISPLAY, but add a 'cancel' to the end.
     select INSTALL_CHOICE in \
-        "${#INSTALLER_PATHS_INTERNAL[@]}" "${CANCEL_TEXT}"; do
+        "${#INSTALLER_PATHS_DISPLAY[@]}" "${CANCEL_TEXT}"; do
 
+        # Any empty newline will result in an automatic redisplay.  A number
+        # out of range, or garbage, will set the select variable to NULL.
         [[ -n "${INSTALL_CHOICE}" ]] && break
 
+        # Bark at the user if they don't enter a valid choice.
         echo "Just pick one of the listed options, okay? "
     done
 
+    # Restore $PS3 to whatever it was originally.
     PS3=${OLD_PROMPT}
 
+    # Return non-zero if the user picked the cancel menu item.
     if [[ "${INSTALL_CHOICE}" == "${CANCEL_TEXT}" ]]; then
         echo 1>&2 "Cancelling ... "
         return $CANCEL
@@ -566,14 +655,19 @@ Select_Install_Path () {
 
 ###############################################################################
 #
-Choose_Target_Path () {
+# We found 0, 1, or many installers/folders; Decide how to handle them.
+#
+# Global $INSTALL_CHOICE is the return, a path from $INSTALLER_PATHS_FOUND.
+# Non-zero return means 'do not proceed with the installation'.
+#
+Choose_or_Approve_Found_Path () {
     local NUMBER_OF_PATHS
 
     # How many install paths did we resolve?
-    NUMBER_OF_PATHS=${#INSTALLER_PATHS_INTERNAL[@]}
+    NUMBER_OF_PATHS=${#INSTALLER_PATHS_FOUND[@]}
 
     # If no install paths were resolved, there's nothing to do!
-    if (( ${NUMBER_OF_PATHS} == 0 )); then
+    if (( ${NUMBER_OF_PATHS} < 1 )); then
 
         echo "Could not find anything to install!  Exiting..."
         return $NOT_FOUND
@@ -582,7 +676,11 @@ Choose_Target_Path () {
     # If only one install path was resolved, ask if we should use it.
     if (( ${NUMBER_OF_PATHS} == 1 )); then
 
-        echo "Found path '${INSTALLER_PATHS_DISPLAY}' "
+        # Set the same variable used by the 'select' function.
+        INSTALL_CHOICE=${INSTALLER_PATHS_DISPLAY}
+
+        # There's only one choice: Use this one or 'cancel'.
+        echo "Found path '${INSTALL_CHOICE}' "
 
         Get_User_Choice -y "Use this path?"
         (( $? == 0 )) || return $REJECTED
@@ -591,9 +689,34 @@ Choose_Target_Path () {
     # If multiple paths were resolved, provide a selection to choose from.
     if (( ${NUMBER_OF_PATHS} > 1 )); then
 
-        Select_Install_Path
+        Select_From_Menu_of_Multiple_Paths
         (( $? == 0 )) || return $CANCEL
     fi
+
+    # We need to translate the 'display' path to the 'found' path.
+    Get_Found_Path_From_Display_Path
+}
+
+
+###############################################################################
+###############################################################################
+#
+Search_This_DirPath_for_Files () {
+    local THIS_FILE
+
+    # Ensure that the path global is a directory.
+    [[ -d "${THIS_PATH}" ]] || return $NOT_FOUND
+
+    # Check each 'file' in the directory given by the path global.
+    for THIS_FILE in "${THIS_PATH}"/*; do
+        #
+        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
+        # We only need one match
+        MATCHED_FILE=${THIS_FILE}
+        return $SUCCESS
+    done
+
+    return $NOT_FOUND
 }
 
 
@@ -604,7 +727,17 @@ Resolve_Directory_with_Zip () {
     # If this path is not a directory, we can't resolve it.
     [[ -d "${THIS_PATH}" ]] || return $NO_MATCH
 
-    #
+    # Examine each 'file' in this directory to find our ZIP file.
+    TARGET_FILE_GREP="${ZIP_FILE_ROOT_NAME_GREP}.zip"
+
+    # Does this directory contain a match?
+    Search_This_DirPath_for_Files
+    (( $? == 0 )) || return $NOT_FOUND
+
+    # It does; change the candidate path to point to the zip file.
+    # The caller will then proceed as though the file were the one
+    # that was found during the initial search.
+    THIS_PATH=${MATCHED_FILE}
 }
 
 
@@ -646,8 +779,8 @@ Resolve_Installer_Zip_File () {
     (( $? == 0 )) || Warn_Cannot_Unzip_File && die $CMD_FAIL
 
     # Since this worked, return with ${THIS_PATH} pointing to the
-    # directory containing the ZIP file contents; the caller will
-    # then proceed as though the file were already unzipped.
+    # directory containing the ZIP file contents; the caller will then
+    # proceed as though the file were already unzipped initially.
 }
 
 
@@ -667,17 +800,55 @@ Resolve_Unzipped_Directory () {
 
 ###############################################################################
 #
-Resolve_Installers () {
+# Initialize 'the stack' of candidate installer/launcher paths.
+#
+# Maintain two parallel stacks, one for paths that we're searching
+# or have discovered something in; the other needs to parallel the
+# first, to hold the originating path --one the user will recognize.
+#
+Initialize_Search_Stack () {
+    local SEARCH_PATH
+
+    # The list of candidate search paths must not be empty...
+    (( ${#INSTALLER_SEARCH_PATHS[@]} > 0 )) || return $CANT_CREATE
+
+    # Create a pair of empty stacks, to be operated in parallel.
+    STACK_OF_SEARCH_PATHS=( )
+    STACK_OF_DISPLAY_PATHS=( )
+
+    # Load the search stacks with the user-provided or default search list.
+    for SEARCH_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
+
+        THIS_SEARCH_PATH=${SEARCH_PATH}
+        THIS_DISPLAY_PATH=${SEARCH_PATH}
+
+        # The stack pushes the above two globals into two global arrays.
+        Push_Search_Paths
+    done
+}
+
+
+###############################################################################
+#
+Resolve_Install_Candidates () {
     # Start a list of installation candidates, as there may be more than one.
-    # We need two arrays for paths: one to show the user, one which is the
+    # We need two arrays for paths: one to show the user + one which is the
     # path to the expanded/located/resolved target directory.
-    INSTALLER_PATHS_DISPLAY=()
-    INSTALLER_PATHS_INTERNAL=()
+    INSTALLER_PATHS_FOUND=( )
+    INSTALLER_PATHS_DISPLAY=( )
+
+    # Initialize the search stacks, loading them with the candidate paths.
+    Initialize_Search_Stack
+    (( $? == 0 )) || return $CANT_CREATE
 
     # Search for installer zip files, or folders of Pharo Launcher files.
-    for THIS_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
+    while true; do
+        # Pop a path off the stack of search paths.
+        # If this fails, the stack is empty: We're done.
+        Pop_Search_Paths
+        (( $? == 0 )) || break
 
-        # Filter 1 = If we can't read it, we can't use it!
+        # If we can't read the 'file' path, we can't do anything with it!
         [[ ! -r "${THIS_PATH}" ]] && continue
 
         # For each test, below, evaluate the indicated condition. Either
@@ -704,6 +875,7 @@ Resolve_Installers () {
 }
 
 
+###############################################################################
 ###############################################################################
 #
 Process_Switch () {
@@ -840,9 +1012,7 @@ Parse_Command_Line () {
 
 ###############################################################################
 #
-Main () {
-    # Read & parse the command line parameters.
-    Parse_Command_Line "${@}"
+Validate_User_Inputs () {
 
     # The 'usage' switch must appear by itself.
     if [[ -n "${USAGE_SWITCH}" ]]; then
@@ -869,12 +1039,26 @@ Main () {
     # If the installer path is provided, substitute it for the search list.
     [[ -n "${INSTALLER_PATH}" ]] && \
         INSTALLER_SEARCH_PATHS=( "${INSTALLER_PATH}" )
+}
 
-    # Use the search path list to find one or more installation candidates.
-    Resolve_Installers
 
-    # Ask the user to select one of the install paths.
-    Choose_Target_Path
+###############################################################################
+###############################################################################
+#
+Main () {
+    # Read & parse the command line parameters.
+    Parse_Command_Line "${@}"
+
+    # Examine what we found and bark at invalid/non-sensical inputs.
+    Validate_User_Inputs
+    (( $? == 0 )) || return $BAD_SWITCH
+
+    # Use the search path list to find/resolve installation candidates.
+    Resolve_Install_Candidates
+    (( $? == 0 )) || return $NOT_FOUND
+
+    # Ask the user to select one of the installation candidates.
+    Choose_or_Approve_Found_Path
     (( $? == 0 )) || return $CANCEL
 
     # Using the list of candidates, install per the user's wishes.
