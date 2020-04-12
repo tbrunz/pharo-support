@@ -41,13 +41,14 @@ TEMPORARY_DIRS=()
 # Function return codes
 #
 SUCCESS=0
-CANCEL=1
-BAD_SWITCH=2
+GEN_FAILURE=1
+CANCEL=2
 NOT_FOUND=3
 REJECTED=4
 NO_MATCH=5
 CANT_CREATE=6
 CMD_FAIL=7
+BAD_SWITCH=8
 
 
 ###############################################################################
@@ -205,6 +206,15 @@ Error_Unknown_Switch () {
 # Notify the user that this command line switch requires an argument.
 #
 Error_Missing_Argument () {
+    Display_Error "Missing argument for switch '${1}'" $BAD_SWITCH
+}
+
+
+###############################################################################
+#
+# Notify the user that this command line switch requires an argument.
+#
+Error_Corrupted_Installer_Paths () {
     Display_Error "Missing argument for switch '${1}'" $BAD_SWITCH
 }
 
@@ -387,6 +397,43 @@ Ensure_is_Not_a_VM_Directory () {
 }
 
 
+###############################################################################
+#
+# If we're directed to use a ZIP file containing the target, then we need
+# an unzip utility to extract it.  Ensure that this app is installed in
+# the system; if not, try to install it.  Return non-zero on failure.
+#
+Ensure_Unzip_Installed () {
+
+    # To unzip the installer ZIP file, we need an 'unzip' application.
+    which "${UNZIP_APPLICATION}" &> /dev/null
+
+    # If it's already installed, we're done.
+    (( $? == 0 )) && return $SUCCESS
+
+    # Otherwise, see if we can install it.
+    which "${REPO_INSTALL_APP}" &> /dev/null
+
+    # We need a repo install app or we can't fix this situation.
+    (( $? == 0 )) || return $NOT_FOUND
+
+    # Don't install software without first getting the user's permission.
+    Get_User_Choice -y "Okay to install '${UNZIP_APPLICATION}'?"
+
+    # If they say 'no', we can't go on...
+    (( $? == 0 )) || return $REJECTED
+
+    # Ask the repo manager to install our unzip application.
+    "${REPO_INSTALL_APP}" "${REPO_INSTALL_CMD}" "${UNZIP_APPLICATION}"
+
+    # Did it work?  We need that unzip app or we can't fix this situation.
+    (( $? == 0 )) || return $CMD_FAIL
+
+    # Finally, verify that we installed what we intended.
+    which "${UNZIP_APPLICATION}" &> /dev/null
+}
+
+
 ############################################################################
 #
 # Display a prompt asking for a one-char response, repeat until a valid input
@@ -499,33 +546,6 @@ Get_User_Choice () {
 
 ###############################################################################
 #
-Ensure_Unzip_Installed () {
-
-    # To unzip the installer ZIP file, we need an 'unzip' application.
-    which "${UNZIP_APPLICATION}" &> /dev/null
-
-    # If it's already installed, we're done.
-    (( $? == 0 )) && return
-
-    # Otherwise, see if we can install it.
-    which "${REPO_INSTALL_APP}" &> /dev/null
-
-    # We need a repo install app or we can't fix this situation.
-    (( $? == 0 )) || return $NOT_FOUND
-
-    # Ask the repo manager to install our unzip application.
-    "${REPO_INSTALL_APP}" "${REPO_INSTALL_CMD}" "${UNZIP_APPLICATION}"
-
-    # We need an unzip app or we can't fix this situation.
-    (( $? == 0 )) || return $NOT_FOUND
-
-    # Finally, verify that we installed what we intended.
-    which "${UNZIP_APPLICATION}" &> /dev/null
-}
-
-
-###############################################################################
-#
 # Push the search/display paths onto "the stack".
 #
 # This uses 4 globals: 2 inputs and 2 state variables.
@@ -568,6 +588,36 @@ Pop_Search_Paths () {
 
 
 ###############################################################################
+#
+# Initialize 'the stack' of candidate installer/launcher paths.
+#
+# Maintain two parallel stacks, one for paths that we're searching
+# or have discovered something in; the other needs to parallel the
+# first, to hold the originating path --one the user will recognize.
+#
+Initialize_Search_Stack () {
+    local SEARCH_PATH
+
+    # The list of candidate search paths must not be empty...
+    (( ${#INSTALLER_SEARCH_PATHS[@]} > 0 )) || return $CANT_CREATE
+
+    # Create a pair of empty stacks, to be operated in parallel.
+    STACK_OF_SEARCH_PATHS=( )
+    STACK_OF_DISPLAY_PATHS=( )
+
+    # Load the search stacks with the user-provided or default search list.
+    for SEARCH_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
+
+        THIS_SEARCH_PATH=${SEARCH_PATH}
+        THIS_DISPLAY_PATH=${SEARCH_PATH}
+
+        # The stack pushes the above two globals into two global arrays.
+        Push_Search_Paths
+    done
+}
+
+
+###############################################################################
 ###############################################################################
 #
 # Now that we have a chosen installation directory, install it.
@@ -583,31 +633,35 @@ Install_Pharo_Launcher () {
 ###############################################################################
 ###############################################################################
 #
-# Given $INSTALL_CHOICE, a path in $INSTALLER_PATHS_DISPLAY, set
-# $INSTALL_PATH from the corresponding path in $INSTALLER_PATHS_FOUND.
+# Given $INSTALL_CHOICE, a path in $INSTALLER_PATHS_DISPLAY, find the
+# corresponding path in $INSTALLER_PATHS_FOUND and set it in $INSTALL_PATH.
 #
 Get_Found_Path_From_Display_Path () {
     local INDEX
 
     # The list we're going to look through must not be empty.
-    (( ${#INSTALLER_PATHS_DISPLAY[@]} > 0 )) || return $NOT_FOUND
+    # (This shouldn't happen -- the user picked from this list.)
+    if (( ${#INSTALLER_PATHS_DISPLAY[@]} > 0 )); then
 
-    # Loop through the array of candidate paths by index rather than by
-    # element; we need to index for parallel list access.
-    for (( INDEX=0; INDEX<${#INSTALLER_PATHS_DISPLAY[@]}; INDEX++ )); do
+        # Loop through the array of candidate paths by index rather than by
+        # element.  Why use an index?  To achieve parallel list access.
+        for (( INDEX=0; INDEX<${#INSTALLER_PATHS_DISPLAY[@]}; INDEX++ )); do
 
-        # The user set $INSTALL_CHOICE based on a string in the DISPLAY list.
-        # If his choice fails to match this element, go on to the next one.
-        [[ "${INSTALLER_PATHS_DISPLAY[${INDEX}]}" == "${INSTALL_CHOICE}" ]] || \
-            continue
+            # The user set $INSTALL_CHOICE based on a string in  DISPLAY list.
+            # If his choice fails to match this element, go to the next one.
+            [[ "${INSTALLER_PATHS_DISPLAY[${INDEX}]}" == \
+                "${INSTALL_CHOICE}" ]] || continue
 
-        # We have a match; the index to the match also indexes the other list.
-        INSTALL_PATH=${INSTALLER_PATHS_FOUND[${INDEX}]}
-        return $SUCCESS
-    done
+            # We have a match; the index to the match indexes the other list.
+            INSTALL_PATH=${INSTALLER_PATHS_FOUND[${INDEX}]}
+            return $SUCCESS
+        done
+    fi
 
-    # If we got this far, we've exhausted the list and failed to find a match.
-    return $NOT_FOUND
+    # If we got this far, we've either exhausted the list and failed to find
+    # a match, or the list had no elements in it.  Neither case should
+    # happen, since the user picked from this list.  So this is an error.
+    Error_Corrupted_Installer_Paths && die $NOT_FOUND
 }
 
 
@@ -616,7 +670,7 @@ Get_Found_Path_From_Display_Path () {
 # Put up a menu of found installers/launchers & let the user choose one.
 #
 # Global $INSTALL_CHOICE is the return, a path from $INSTALLER_PATHS_DISPLAY.
-# Non-zero return means the user cancelled the installation.
+# The user has the option of cancelling; if so, return non-zero.
 #
 Select_From_Menu_of_Multiple_Paths () {
     local OLD_PROMPT
@@ -638,7 +692,7 @@ Select_From_Menu_of_Multiple_Paths () {
         # out of range, or garbage, will set the select variable to NULL.
         [[ -n "${INSTALL_CHOICE}" ]] && break
 
-        # Bark at the user if they don't enter a valid choice.
+        # Bark at the user if they don't enter a valid choice, then re-do.
         echo "Just pick one of the listed options, okay? "
     done
 
@@ -677,7 +731,7 @@ Choose_or_Approve_Found_Path () {
     if (( ${NUMBER_OF_PATHS} == 1 )); then
 
         # Set the same variable used by the 'select' function.
-        INSTALL_CHOICE=${INSTALLER_PATHS_DISPLAY}
+        INSTALL_CHOICE=${INSTALLER_PATHS_DISPLAY[0]}
 
         # There's only one choice: Use this one or 'cancel'.
         echo "Found path '${INSTALL_CHOICE}' "
@@ -692,8 +746,9 @@ Choose_or_Approve_Found_Path () {
         Select_From_Menu_of_Multiple_Paths
         (( $? == 0 )) || return $CANCEL
     fi
-
-    # We need to translate the 'display' path to the 'found' path.
+    # The user picked a 'display' path, which gives as a string (a path);
+    # But we can't use that, directly.  We need to translate the 'display'
+    # path into its corresponding 'found' path, and install that path.
     Get_Found_Path_From_Display_Path
 }
 
@@ -800,38 +855,8 @@ Resolve_Unzipped_Directory () {
 
 ###############################################################################
 #
-# Initialize 'the stack' of candidate installer/launcher paths.
-#
-# Maintain two parallel stacks, one for paths that we're searching
-# or have discovered something in; the other needs to parallel the
-# first, to hold the originating path --one the user will recognize.
-#
-Initialize_Search_Stack () {
-    local SEARCH_PATH
-
-    # The list of candidate search paths must not be empty...
-    (( ${#INSTALLER_SEARCH_PATHS[@]} > 0 )) || return $CANT_CREATE
-
-    # Create a pair of empty stacks, to be operated in parallel.
-    STACK_OF_SEARCH_PATHS=( )
-    STACK_OF_DISPLAY_PATHS=( )
-
-    # Load the search stacks with the user-provided or default search list.
-    for SEARCH_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
-
-        THIS_SEARCH_PATH=${SEARCH_PATH}
-        THIS_DISPLAY_PATH=${SEARCH_PATH}
-
-        # The stack pushes the above two globals into two global arrays.
-        Push_Search_Paths
-    done
-}
-
-
-###############################################################################
-#
 Resolve_Install_Candidates () {
-    # Start a list of installation candidates, as there may be more than one.
+    # Start a list of installer search paths, as there may be more than one.
     # We need two arrays for paths: one to show the user + one which is the
     # path to the expanded/located/resolved target directory.
     INSTALLER_PATHS_FOUND=( )
