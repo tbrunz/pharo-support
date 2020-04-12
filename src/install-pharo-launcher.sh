@@ -212,10 +212,19 @@ Error_Missing_Argument () {
 
 ###############################################################################
 #
-# Notify the user that this command line switch requires an argument.
+# Notify the user that
 #
 Error_Corrupted_Installer_Paths () {
-    Display_Error "Missing argument for switch '${1}'" $BAD_SWITCH
+    Display_Error "" $BAD_SWITCH
+}
+
+
+###############################################################################
+#
+# Notify the user that this function call requires a parameter.
+#
+Error_Missing_Parameter () {
+    Display_Error "Missing/corrupt function parameter '${1}'" $BAD_SWITCH
 }
 
 
@@ -548,13 +557,14 @@ Get_User_Choice () {
 #
 # Push the search/display paths onto "the stack".
 #
-# This uses 4 globals: 2 inputs and 2 state variables.
-#
 Push_Search_Paths () {
+    # Ensure that we have two arguments to push, both viable paths.
+    [[ -r "${1}" ]] || Error_Missing_Parameter "Search Path"
+    [[ -r "${2}" ]] || Error_Missing_Parameter "Display Path"
 
     # Bash makes pushing something on the end of an array trivial...
-    STACK_OF_SEARCH_PATHS+=( "${THIS_SEARCH_PATH}" )
-    STACK_OF_DISPLAY_PATHS+=( "${THIS_DISPLAY_PATH}" )
+    STACK_OF_SEARCH_PATHS+=( "${1}" )
+    STACK_OF_DISPLAY_PATHS+=( "${2}" )
 }
 
 
@@ -608,11 +618,8 @@ Initialize_Search_Stack () {
     # Load the search stacks with the user-provided or default search list.
     for SEARCH_PATH in "${INSTALLER_SEARCH_PATHS[@]}"; do
 
-        THIS_SEARCH_PATH=${SEARCH_PATH}
-        THIS_DISPLAY_PATH=${SEARCH_PATH}
-
         # The stack pushes the above two globals into two global arrays.
-        Push_Search_Paths
+        Push_Search_Paths "${SEARCH_PATH}" "${SEARCH_PATH}"
     done
 }
 
@@ -778,21 +785,23 @@ Search_This_DirPath_for_Files () {
 ###############################################################################
 #
 Resolve_Directory_with_Zip () {
+    local THIS_FILE
 
     # If this path is not a directory, we can't resolve it.
-    [[ -d "${THIS_PATH}" ]] || return $NO_MATCH
+    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
 
     # Examine each 'file' in this directory to find our ZIP file.
     TARGET_FILE_GREP="${ZIP_FILE_ROOT_NAME_GREP}.zip"
 
     # Does this directory contain a match?
-    Search_This_DirPath_for_Files
-    (( $? == 0 )) || return $NOT_FOUND
+    for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
 
-    # It does; change the candidate path to point to the zip file.
-    # The caller will then proceed as though the file were the one
-    # that was found during the initial search.
-    THIS_PATH=${MATCHED_FILE}
+        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
+
+        # For a match, push the path on the stack, as both types.
+        Push_Search_Paths "${THIS_SEARCH_PATH}/${THIS_FILE}" \
+            "${THIS_SEARCH_PATH}/${THIS_FILE}"
+    done
 }
 
 
@@ -803,10 +812,10 @@ Resolve_Installer_Zip_File () {
     local ZIP_FILE_PATH
 
     # If this path is not a file, we can't resolve it.
-    [[ -f "${THIS_PATH}" ]] || return $NO_MATCH
+    [[ -f "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
 
     # Need the basename for pattern grepping.
-    BASE_NAME=$( basename "${THIS_PATH}" )
+    BASE_NAME=$( basename "${THIS_SEARCH_PATH}" )
 
     # If the file name doesn't end in '.zip', we can't resolve it.
     [[ "${BASE_NAME##*.}" == "zip" ]] || return $NO_MATCH
@@ -818,24 +827,25 @@ Resolve_Installer_Zip_File () {
     Ensure_Unzip_Installed || Warn_of_No_Unzip_App && die $NOT_FOUND
 
     # We also need a temporary directory to unzip it into.
-    ZIP_FILE_PATH=${THIS_PATH}
-    THIS_PATH=$( mktemp -q -d )
+    ZIP_FILE_PATH=${THIS_SEARCH_PATH}
+    THIS_SEARCH_PATH=$( mktemp -q -d )
 
     # We need to have acquired a temp directory.
     (( $? == 0 )) || Warn_of_No_Temp_Directory && die $CANT_CREATE
 
     # Remember this directory path, so we can remove it when we're done.
-    TEMPORARY_DIRS+=( "${THIS_PATH}" )
+    TEMPORARY_DIRS+=( "${THIS_SEARCH_PATH}" )
 
-    # Unzip it, as we need a directory path.
-    "${UNZIP_APPLICATION}" "${ZIP_FILE_PATH}" -d "${THIS_PATH}"
+    # Unzip the ZIP file found into the temp directory (our new path).
+    "${UNZIP_APPLICATION}" "${ZIP_FILE_PATH}" -d "${THIS_SEARCH_PATH}"
 
     # We need to have successfully unzipped the zip package.
     (( $? == 0 )) || Warn_Cannot_Unzip_File && die $CMD_FAIL
 
-    # Since this worked, return with ${THIS_PATH} pointing to the
-    # directory containing the ZIP file contents; the caller will then
-    # proceed as though the file were already unzipped initially.
+    # Since this worked, return with $THIS_SEARCH_PATH pointing to the
+    # directory containing the ZIP file contents; $THIS_DISPLAY_PATH does
+    # *not* change, however -- it's still the originating path.  On return,
+    # the caller will think this target was always an unzipped directory.
 }
 
 
@@ -868,33 +878,33 @@ Resolve_Install_Candidates () {
 
     # Search for installer zip files, or folders of Pharo Launcher files.
     while true; do
-        # Pop a path off the stack of search paths.
-        # If this fails, the stack is empty: We're done.
+        # Pop a path off the stack of search paths, setting $THIS_SEARCH_PATH
+        # and $THIS_DISPLAY_PATH.  If this fails, the stack is empty.
         Pop_Search_Paths
         (( $? == 0 )) || break
 
         # If we can't read the 'file' path, we can't do anything with it!
-        [[ ! -r "${THIS_PATH}" ]] && continue
+        [[ ! -r "${THIS_SEARCH_PATH}" ]] && continue
 
         # For each test, below, evaluate the indicated condition. Either
         # the condition doesn't apply (return), or, if it does, the call
         # will reduce it to one of the following, and adjust ${THIS_PATH}.
 
         # Test 1 = Is this path a directory containing an installer zip?
-        Resolve_Directory_with_Zip "${THIS_PATH}"
+        Resolve_Directory_with_Zip "${THIS_SEARCH_PATH}"
 
         # Test 2 = Is this path an installer zip file?
-        Resolve_Installer_Zip_File "${THIS_PATH}"
+        Resolve_Installer_Zip_File "${THIS_SEARCH_PATH}"
 
         # Test 3 = Is this path a directory containing the expanded zip dir?
-        Resolve_Directory_with_Unzipped "${THIS_PATH}"
+        Resolve_Directory_with_Unzipped "${THIS_SEARCH_PATH}"
 
         # Test 4 = Is this path the expanded zip file directory?
-        Resolve_Unzipped_Directory "${THIS_PATH}"
+        Resolve_Unzipped_Directory "${THIS_SEARCH_PATH}"
         (( $? == 0 )) && continue
 
         # Test 5 = Is this path a previously-installed launcher directory?
-        Resolve_Pharo_Launcher_Directory "${THIS_PATH}"
+        Resolve_Pharo_Launcher_Directory "${THIS_SEARCH_PATH}"
         (( $? == 0 )) && continue
     done
 }
