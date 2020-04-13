@@ -734,7 +734,7 @@ Select_From_Menu_of_Multiple_Paths () {
 
     # Preserve $PS3, then set it to prompt for our menu choice.
     OLD_PROMPT=${PS3}
-    PS3="Which path to install?"
+    PS3="Which path to install? "
 
     # Dialog boxes need a title...
     echo
@@ -742,7 +742,7 @@ Select_From_Menu_of_Multiple_Paths () {
 
     # Use the list in $INSTALLER_PATHS_DISPLAY, but add a 'cancel' to the end.
     select INSTALL_CHOICE in \
-        "${#INSTALLER_PATHS_DISPLAY[@]}" "${CANCEL_TEXT}"; do
+        "${INSTALLER_PATHS_DISPLAY[@]}" "${CANCEL_TEXT}"; do
 
         # Any empty newline will result in an automatic redisplay.  A number
         # out of range, or garbage, will set the select variable to NULL.
