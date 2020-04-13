@@ -454,6 +454,23 @@ Ensure_Unzip_Installed () {
 
 ############################################################################
 #
+# Convert the argument from '-Xyz' to 'x', 'A' to 'a', '' to ''
+#
+GetOpt () {
+    local OPT=${1}
+
+    if [[ -n "${OPT}" ]]; then
+        OPT=${OPT##-}
+        OPT=${OPT,,}
+        OPT=${OPT:0:1}
+    fi
+
+    printf "%s" "${OPT}"
+}
+
+
+############################################################################
+#
 # Display a prompt asking for a one-char response, repeat until a valid input
 #
 # Automatically appends the default to the prompt, capitalized.
@@ -586,14 +603,17 @@ Push_Search_Paths () {
     fi
 
     # Otherwise, determine if the Search path is a temp directory.
-    if [[ "${SEARCH_PATH:0:5}" != "/tmp/" ]]; then
+    if [[ "${SEARCH_PATH:0:5}" == "/tmp/" ]]; then
 
+        # It is, so don't change the display path (keep it as the zip file).
+        STACK_OF_DISPLAY_PATHS+=( "${DISPLAY_PATH}" )
+    else
         # It's not, so add the file/directory the end of the Display path.
-        STACK_OF_DISPLAY_PATHS+=( "${DISPLAY_PATH}/${THIS_FILE}" )
+        STACK_OF_DISPLAY_PATHS+=( "${THIS_FILE}" )
     fi
 
     # In any case, add the file/directory to the end of the Search path.
-    STACK_OF_SEARCH_PATHS+=( "${SEARCH_PATH}/${THIS_FILE}" )
+    STACK_OF_SEARCH_PATHS+=( "${THIS_FILE}" )
 }
 
 
@@ -811,23 +831,24 @@ Resolve_Installer_Zip_File () {
     [[ "${BASE_NAME}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || return $NO_MATCH
 
     # It's one of our zip files...  We need to have 'unzip' installed.
-    Ensure_Unzip_Installed || Warn_of_No_Unzip_App && die $NOT_FOUND
+    Ensure_Unzip_Installed || ( Warn_of_No_Unzip_App && die $NOT_FOUND )
 
     # We also need a temporary directory to unzip it into.
     ZIP_FILE_PATH=${THIS_SEARCH_PATH}
     THIS_SEARCH_PATH=$( mktemp -q -d )
 
     # We need to have acquired a temp directory.
-    (( $? == 0 )) || Warn_of_No_Temp_Directory && die $CANT_CREATE
+    (( $? == 0 )) || ( Warn_of_No_Temp_Directory && die $CANT_CREATE )
 
     # Remember this directory path, so we can remove it when we're done.
     TEMPORARY_DIRS+=( "${THIS_SEARCH_PATH}" )
 
     # Unzip the ZIP file found into the temp directory (our new path).
-    "${UNZIP_APPLICATION}" "${ZIP_FILE_PATH}" -d "${THIS_SEARCH_PATH}"
+    "${UNZIP_APPLICATION}" "${ZIP_FILE_PATH}" \
+        -d "${THIS_SEARCH_PATH}" &>/dev/null
 
     # We need to have successfully unzipped the zip package.
-    (( $? == 0 )) || Warn_Cannot_Unzip_File && die $CMD_FAIL
+    (( $? == 0 )) || ( Warn_Cannot_Unzip_File && die $CMD_FAIL )
 
     # Since this worked, return with $THIS_SEARCH_PATH pointing to the
     # directory containing the ZIP file contents; $THIS_DISPLAY_PATH does
@@ -841,6 +862,7 @@ Resolve_Installer_Zip_File () {
 # If the path is a directory containing zip files, push the zip files.
 #
 Resolve_Directory_with_Zip () {
+    local BASE_NAME
     local THIS_FILE
     local TARGET_FILE_GREP
 
@@ -853,8 +875,11 @@ Resolve_Directory_with_Zip () {
     # Does this directory contain a match?
     for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
 
+        # Need the basename for pattern grepping.
+        BASE_NAME=$( basename "${THIS_FILE}" )
+
         # If it doesn't grep out, skip it.
-        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
+        [[ "${BASE_NAME}" =~ ${TARGET_FILE_GREP} ]] || continue
 
         # If it does, then verify that we can read it.
         [[ -r "${THIS_FILE}" ]] || continue
@@ -875,6 +900,7 @@ Resolve_Directory_with_Zip () {
 # unzipped files, push each matching directory.
 #
 Resolve_Directory_with_Unzipped () {
+    local BASE_NAME
     local THIS_DIR
 
     # If this path is not a directory, we can't resolve it.
@@ -883,11 +909,14 @@ Resolve_Directory_with_Unzipped () {
     # Does this directory contain a match?
     for THIS_DIR in "${THIS_SEARCH_PATH}"/*; do
 
+        # Need the basename for pattern grepping.
+        BASE_NAME=$( basename "${THIS_DIR}" )
+
         # If it doesn't grep out, skip it.
-        [[ "${THIS_DIR}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || continue
+        [[ "${BASE_NAME}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || continue
 
         # If it does, then verify that we can read it.
-        [[ -r "${THIS_FILE}" ]] || continue
+        [[ -r "${THIS_DIR}" ]] || continue
 
         # If we can, then verify that it's a directory.
         [[ -d "${THIS_DIR}" ]] || continue
@@ -905,6 +934,7 @@ Resolve_Directory_with_Unzipped () {
 # push each directory with a matching name.
 #
 Resolve_Unzipped_Directory () {
+    local BASE_NAME
     local THIS_DIR
 
     # If this path is not a directory, we can't resolve it.
@@ -913,11 +943,14 @@ Resolve_Unzipped_Directory () {
     # Does this directory contain a match?
     for THIS_DIR in "${THIS_SEARCH_PATH}"/*; do
 
-        # If it doesn't grep out, skip it.
-        [[ "${THIS_DIR}" =~ ${INSTALLER_DIR_NAME_GREP} ]] || continue
+        # Need the basename for file matching.
+        BASE_NAME=$( basename "${THIS_DIR}" )
+
+        # If it doesn't match, skip it.
+        [[ "${BASE_NAME}" == "${INSTALLER_DIR_NAME_GREP}" ]] || continue
 
         # If it does, then verify that we can read it.
-        [[ -r "${THIS_FILE}" ]] || continue
+        [[ -r "${THIS_DIR}" ]] || continue
 
         # If we can, then verify that it's a directory.
         [[ -d "${THIS_DIR}" ]] || continue
@@ -935,6 +968,7 @@ Resolve_Unzipped_Directory () {
 # then add it to the candidate list for the user to choose from.
 #
 Resolve_Pharo_Launcher_Directory () {
+    local BASE_NAME
     local THIS_FILE
 
     # If this path is not a directory, we can't resolve it.
@@ -943,8 +977,11 @@ Resolve_Pharo_Launcher_Directory () {
     # Does this directory contain a match?
     for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
 
-        # If it doesn't grep out, skip it.
-        [[ "${THIS_FILE}" =~ ${APPLICATION_SCRIPT_NAME} ]] || continue
+        # Need the basename for file matching.
+        BASE_NAME=$( basename "${THIS_FILE}" )
+
+        # If it doesn't match, skip it.
+        [[ "${BASE_NAME}" == "${APPLICATION_SCRIPT_NAME}" ]] || continue
 
         # If it does, then verify that we can read it.
         [[ -r "${THIS_FILE}" ]] || continue
@@ -954,14 +991,14 @@ Resolve_Pharo_Launcher_Directory () {
 
         # If it is, then get its file type.
         THIS_FILE_TYPE=$( file "${THIS_FILE}" 2>/dev/null )
-        (( $? == 0 )) || Error_Linux_Command_Failure "file" && die $CMD_FAIL
+        (( $? == 0 )) || ( Error_Linux_Command_Failure "file" && die $CMD_FAIL )
 
         # Then verify it's a bash script file.
-        [[ "${THIS_FILE_TYPE}" == "Bourne-Again shell script" ]] || continue
+        [[ "${THIS_FILE_TYPE}" =~ "Bourne-Again shell script" ]] || continue
 
         # For a match, move the paths from the stack to the candidate lists.
-        INSTALLER_PATHS_FOUND=( "${THIS_SEARCH_PATH}" )
-        INSTALLER_PATHS_DISPLAY=( "${THIS_DISPLAY_PATH}" )
+        INSTALLER_PATHS_FOUND+=( "${THIS_SEARCH_PATH}" )
+        INSTALLER_PATHS_DISPLAY+=( "${THIS_DISPLAY_PATH}" )
 
         # If there's one, there's only one, so return if we found one.
         return $SUCCESS
@@ -1007,11 +1044,9 @@ Resolve_Install_Candidates () {
 
         # Test 4 = Is this path the expanded zip file directory?
         Resolve_Unzipped_Directory "${THIS_SEARCH_PATH}"
-        (( $? == 0 )) && continue
 
         # Test 5 = Is this path a previously-installed launcher directory?
         Resolve_Pharo_Launcher_Directory "${THIS_SEARCH_PATH}"
-        (( $? == 0 )) && continue
     done
 }
 
@@ -1174,12 +1209,12 @@ Validate_User_Inputs () {
         Error_Duplicate_Switch "-${DUPLICATE_SWITCH}"
     fi
 
-    # If the destination path is missing, default it.
-    [[ -n "${DESTINATION_PATH}" ]] || DESTINATION_PATH=${DEFAULT_DESTINATION}
-
     # If the installer path is provided, substitute it for the search list.
     [[ -n "${INSTALLER_PATH}" ]] && \
         INSTALLER_SEARCH_PATHS=( "${INSTALLER_PATH}" )
+
+    # If the destination path is missing, default it.
+    [[ -n "${DESTINATION_PATH}" ]] || DESTINATION_PATH=${DEFAULT_DESTINATION}
 }
 
 
@@ -1206,4 +1241,4 @@ Main () {
     Install_Pharo_Launcher
 }
 
-Main "$@"
+Main "$@" || die
