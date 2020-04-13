@@ -212,10 +212,10 @@ Error_Missing_Argument () {
 
 ###############################################################################
 #
-# Notify the user that
+# Notify the user that the candidate lists got corrupted somehow.
 #
 Error_Corrupted_Installer_Paths () {
-    Display_Error "" $BAD_SWITCH
+    Display_Error "The installation candidates list got corrupted!" $NOT_FOUND
 }
 
 
@@ -225,6 +225,15 @@ Error_Corrupted_Installer_Paths () {
 #
 Error_Missing_Parameter () {
     Display_Error "Missing/corrupt function parameter '${1}'" $BAD_SWITCH
+}
+
+
+###############################################################################
+#
+# Notify the user that a Linux command failed unexpectedly
+#
+Error_Linux_Command_Failure () {
+    Display_Error "Linux command '${1}' failed unexpectedly!" $CMD_FAIL
 }
 
 
@@ -558,13 +567,33 @@ Get_User_Choice () {
 # Push the search/display paths onto "the stack".
 #
 Push_Search_Paths () {
-    # Ensure that we have two arguments to push, both viable paths.
-    [[ -r "${1}" ]] || Error_Missing_Parameter "Search Path"
-    [[ -r "${2}" ]] || Error_Missing_Parameter "Display Path"
+    local SEARCH_PATH=${1}
+    local DISPLAY_PATH=${2}
+    local THIS_FILE=${3}
 
-    # Bash makes pushing something on the end of an array trivial...
-    STACK_OF_SEARCH_PATHS+=( "${1}" )
-    STACK_OF_DISPLAY_PATHS+=( "${2}" )
+    # Ensure that we have two arguments to push, both viable paths.
+    [[ -r "${SEARCH_PATH}" ]] || Error_Missing_Parameter "Search Path"
+    [[ -r "${DISPLAY_PATH}" ]] || Error_Missing_Parameter "Display Path"
+
+    # If we don't have a third parameter, then use the two we have.
+    if [[ -z "${THIS_FILE}" ]]; then
+
+        # Bash makes pushing something on the end of an array trivial...
+        STACK_OF_SEARCH_PATHS+=( "${SEARCH_PATH}" )
+        STACK_OF_DISPLAY_PATHS+=( "${DISPLAY_PATH}" )
+
+        return $SUCCESS
+    fi
+
+    # Otherwise, determine if the Search path is a temp directory.
+    if [[ "${SEARCH_PATH:0:5}" != "/tmp/" ]]; then
+
+        # It's not, so add the file/directory the end of the Display path.
+        STACK_OF_DISPLAY_PATHS+=( "${DISPLAY_PATH}/${THIS_FILE}" )
+    fi
+
+    # In any case, add the file/directory to the end of the Search path.
+    STACK_OF_SEARCH_PATHS+=( "${SEARCH_PATH}/${THIS_FILE}" )
 }
 
 
@@ -763,49 +792,7 @@ Choose_or_Approve_Found_Path () {
 ###############################################################################
 ###############################################################################
 #
-Search_This_DirPath_for_Files () {
-    local THIS_FILE
-
-    # Ensure that the path global is a directory.
-    [[ -d "${THIS_PATH}" ]] || return $NOT_FOUND
-
-    # Check each 'file' in the directory given by the path global.
-    for THIS_FILE in "${THIS_PATH}"/*; do
-        #
-        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
-        # We only need one match
-        MATCHED_FILE=${THIS_FILE}
-        return $SUCCESS
-    done
-
-    return $NOT_FOUND
-}
-
-
-###############################################################################
-#
-Resolve_Directory_with_Zip () {
-    local THIS_FILE
-
-    # If this path is not a directory, we can't resolve it.
-    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
-
-    # Examine each 'file' in this directory to find our ZIP file.
-    TARGET_FILE_GREP="${ZIP_FILE_ROOT_NAME_GREP}.zip"
-
-    # Does this directory contain a match?
-    for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
-
-        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
-
-        # For a match, push the path on the stack, as both types.
-        Push_Search_Paths "${THIS_SEARCH_PATH}/${THIS_FILE}" \
-            "${THIS_SEARCH_PATH}/${THIS_FILE}"
-    done
-}
-
-
-###############################################################################
+# If the path is a Pharo Launcher zip file, then resolve its payload.
 #
 Resolve_Installer_Zip_File () {
     local BASE_NAME
@@ -851,15 +838,134 @@ Resolve_Installer_Zip_File () {
 
 ###############################################################################
 #
-Resolve_Directory_with_Unzipped () {
-    echo "${USAGE_PROMPT}"
+# If the path is a directory containing zip files, push the zip files.
+#
+Resolve_Directory_with_Zip () {
+    local THIS_FILE
+    local TARGET_FILE_GREP
+
+    # If this path is not a directory, we can't resolve it.
+    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
+
+    # Examine each 'file' in this directory to find our ZIP file.
+    TARGET_FILE_GREP="${ZIP_FILE_ROOT_NAME_GREP}.zip"
+
+    # Does this directory contain a match?
+    for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
+
+        # If it doesn't grep out, skip it.
+        [[ "${THIS_FILE}" =~ ${TARGET_FILE_GREP} ]] || continue
+
+        # If it does, then verify that we can read it.
+        [[ -r "${THIS_FILE}" ]] || continue
+
+        # If we can, then verify that it's a file.
+        [[ -f "${THIS_FILE}" ]] || continue
+
+        # For a match, push the path on the stack, as both types.
+        Push_Search_Paths "${THIS_SEARCH_PATH}" \
+            "${THIS_DISPLAY_PATH}" "${THIS_FILE}"
+    done
 }
 
 
 ###############################################################################
 #
+# If the path is a directory containing the directories of
+# unzipped files, push each matching directory.
+#
+Resolve_Directory_with_Unzipped () {
+    local THIS_DIR
+
+    # If this path is not a directory, we can't resolve it.
+    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
+
+    # Does this directory contain a match?
+    for THIS_DIR in "${THIS_SEARCH_PATH}"/*; do
+
+        # If it doesn't grep out, skip it.
+        [[ "${THIS_DIR}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || continue
+
+        # If it does, then verify that we can read it.
+        [[ -r "${THIS_FILE}" ]] || continue
+
+        # If we can, then verify that it's a directory.
+        [[ -d "${THIS_DIR}" ]] || continue
+
+        # For a match, push the path, but preserve the display path.
+        Push_Search_Paths "${THIS_SEARCH_PATH}" \
+            "${THIS_DISPLAY_PATH}" "${THIS_DIR}"
+    done
+}
+
+
+###############################################################################
+#
+# If the path is a directory inside the directory from an unzipped file,
+# push each directory with a matching name.
+#
 Resolve_Unzipped_Directory () {
-    echo "${USAGE_PROMPT}"
+    local THIS_DIR
+
+    # If this path is not a directory, we can't resolve it.
+    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
+
+    # Does this directory contain a match?
+    for THIS_DIR in "${THIS_SEARCH_PATH}"/*; do
+
+        # If it doesn't grep out, skip it.
+        [[ "${THIS_DIR}" =~ ${INSTALLER_DIR_NAME_GREP} ]] || continue
+
+        # If it does, then verify that we can read it.
+        [[ -r "${THIS_FILE}" ]] || continue
+
+        # If we can, then verify that it's a directory.
+        [[ -d "${THIS_DIR}" ]] || continue
+
+        # For a match, push the path, but preserve the display path.
+        Push_Search_Paths "${THIS_SEARCH_PATH}" \
+            "${THIS_DISPLAY_PATH}" "${THIS_DIR}"
+    done
+}
+
+
+###############################################################################
+#
+# If the path is a directory containing the Pharo Launcher app script,
+# then add it to the candidate list for the user to choose from.
+#
+Resolve_Pharo_Launcher_Directory () {
+    local THIS_FILE
+
+    # If this path is not a directory, we can't resolve it.
+    [[ -d "${THIS_SEARCH_PATH}" ]] || return $NO_MATCH
+
+    # Does this directory contain a match?
+    for THIS_FILE in "${THIS_SEARCH_PATH}"/*; do
+
+        # If it doesn't grep out, skip it.
+        [[ "${THIS_FILE}" =~ ${APPLICATION_SCRIPT_NAME} ]] || continue
+
+        # If it does, then verify that we can read it.
+        [[ -r "${THIS_FILE}" ]] || continue
+
+        # If we can, then verify that it's a file.
+        [[ -f "${THIS_FILE}" ]] || continue
+
+        # If it is, then get its file type.
+        THIS_FILE_TYPE=$( file "${THIS_FILE}" 2>/dev/null )
+        (( $? == 0 )) || Error_Linux_Command_Failure "file" && die $CMD_FAIL
+
+        # Then verify it's a bash script file.
+        [[ "${THIS_FILE_TYPE}" == "Bourne-Again shell script" ]] || continue
+
+        # For a match, move the paths from the stack to the candidate lists.
+        INSTALLER_PATHS_FOUND=( "${THIS_SEARCH_PATH}" )
+        INSTALLER_PATHS_DISPLAY=( "${THIS_DISPLAY_PATH}" )
+
+        # If there's one, there's only one, so return if we found one.
+        return $SUCCESS
+    done
 }
 
 
