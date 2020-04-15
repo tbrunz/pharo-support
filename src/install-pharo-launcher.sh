@@ -48,7 +48,9 @@ REJECTED=4
 NO_MATCH=5
 CANT_CREATE=6
 CMD_FAIL=7
-BAD_SWITCH=8
+BAD_DIR=8
+BAD_ARG=9
+BAD_SWITCH=10
 
 
 ###############################################################################
@@ -239,6 +241,15 @@ Error_Linux_Command_Failure () {
 
 ###############################################################################
 #
+# Notify the user that a Linux command failed unexpectedly
+#
+Warn_of_Bad_Destination () {
+    Display_Error "Destination must be a writable directory!" $BAD_DIR
+}
+
+
+###############################################################################
+#
 # Notify the user of what's likely a programming bug: Bad/missing arguments.
 #
 Warn_of_Bad_Argument () {
@@ -393,6 +404,8 @@ Ensure_is_a_Directory () {
     # $1 must be provided, and it must be a directory, else fatal error.
     [[ -n "${1}" &&  -d "${1}" ]] && return
 
+    [[ -d "${1}" ]] || return $BAD_DIR
+
     Warn_of_Bad_Argument "${FUNCNAME}" && die
 }
 
@@ -401,17 +414,14 @@ Ensure_is_a_Directory () {
 #
 # Ensure that the provided argument is a valid directory, but not a VM dir.
 #
-Ensure_is_Not_a_VM_Directory () {
+Ensure_is_a_Writable_Directory () {
     local THIS_DIR=${1}
-    local ERROR_MSG
 
     # First, we must have an argument, and it must be a directory path:
-    Ensure_is_a_Directory "${THIS_DIR}"
+    Ensure_is_a_Directory "${THIS_DIR}" || return $BAD_DIR
 
-    # Additionally, the path must not match a string indicating a Pharo VM.
-    [[ ! "${THIS_DIR}" =~ ${VM_TAG} ]] && return
-
-    return $VM_DIR
+    # Additionally, the path must be writable by us.
+    [[ -w "${THIS_DIR}" ]] || return $BAD_DIR
 }
 
 
@@ -679,10 +689,63 @@ Initialize_Search_Stack () {
 # Now that we have a chosen installation directory, install it.
 #
 Install_Pharo_Launcher () {
+    local BASE_DIRECTORY
+    local DEST_FINAL_PATH
+    local TEST_FILE
+    local TEST_FILE_NAME
 
-    # Installing to ${DESTINATION_PATH}
-    echo "Installing '${INSTALL_PATH}' to '${DESTINATION_PATH}'... "
+    # We need the name of the source directory that we'll be moving.
+    BASE_DIRECTORY=$( "${INSTALL_PATH}" )
 
+    # And append it to the destination directory path so we can test it.
+    DEST_FINAL_PATH=${DESTINATION_PATH}/${BASE_DIRECTORY}
+
+    # Does it already exist?  And if so, is it writable?
+    Ensure_is_a_Writable_Directory "${DEST_FINAL_PATH}"
+
+    # If it already exists as a writable directory, there's more checks.
+    if (( $? == 0 )); then
+
+        # Is it the same as the source?  Test this by creating a temp
+        # "test file" and seeing it also appears in the source directory.
+        TEST_FILE=$( mktemp -p "${DEST_FINAL_PATH}" &>/dev/null )
+
+        # If this doesn't succeed, we have a system error.
+        (( $? == 0 )) || Error_Linux_Command_Failure "mktemp"
+
+        # Otherwise, look for the same file in the source directory.
+        TEST_FILE_NAME=$( basename "${TEST_FILE}" )
+
+        if [[ -f "${INSTALL_PATH}/${TEST_FILE_NAME}" ]]; then
+
+            # The test file is no longer relevant; remove it.
+            rm -rf "${TEST_FILE}"
+            Warn_Nothing_to_Do && die
+        fi
+
+        # The test file is no longer relevant; remove it.
+        rm -rf "${TEST_FILE}"
+        (( $? == 0 )) || Error_Linux_Command_Failure "rm -rf"
+
+    elif [[ -d "${DEST_FINAL_PATH}" ]]; then
+        # The destination directory exists, but it's not writable by us.
+        # This means it can't be replaced, so we can't proceed.
+        Warn_Cant_Write_Destination && die $BAD_DIR
+    fi
+
+    if [[ -d "${DEST_FINAL_PATH}" ]]; then
+        # The destination directory exists and is writable, and is
+        # not the same as the source.  We need permission to replace it.
+        Get_Permission_to_Replace_Dest || die
+
+        # Remove the directory we're about to create.
+        rm -rf "${DEST_FINAL_PATH}"
+        (( $? == 0 )) || ( Warn_Cant_Remove_Directory && die $CMD_FAIL )
+    fi
+
+    # Finally, since we have no destination directory, move the source.
+    mv "${INSTALL_PATH}" "${DESTINATION_PATH}/"
+    (( $? == 0 )) || ( Warn_Cant_Move_Installer && die $CMD_FAIL )
 }
 
 
@@ -1215,6 +1278,10 @@ Validate_User_Inputs () {
 
     # If the destination path is missing, default it.
     [[ -n "${DESTINATION_PATH}" ]] || DESTINATION_PATH=${DEFAULT_DESTINATION}
+
+    # The destination path must be a directory.
+    Ensure_is_a_Writable_Directory "${DESTINATION_PATH}" || \
+        ( Warn_of_Bad_Destination && die $BAD_DIR )
 }
 
 
@@ -1227,7 +1294,7 @@ Main () {
 
     # Examine what we found and bark at invalid/non-sensical inputs.
     Validate_User_Inputs
-    (( $? == 0 )) || return $BAD_SWITCH
+    (( $? == 0 )) || return $BAD_ARG
 
     # Use the search path list to find/resolve installation candidates.
     Resolve_Install_Candidates
