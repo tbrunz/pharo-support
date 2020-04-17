@@ -3,21 +3,25 @@ Miscellaneous scripts for installing & configuring Pharo applications & software
 
 ### Pharo-Launcher Installer
 
-#### Note: This script is currently being rewritten
-
 This bash shell script automates the installation of `Pharo-Launcher` in Linux.  It's primary value-add is that it creates a `.desktop` launcher file that can be used to put an icon in the dock to make launching the app easier.
 
-To use the `PharoLauncher` installer script, download a `PharoLauncher` zip file from https://pharo.org (32-bit or 64-bit) and copy it to the directory you wish to use for your Pharo projects; I use `~/Pharo`.  Then copy the `install-pharolauncher.sh` script into the same directory and run it.  
+To use the installer script, download a `PharoLauncher` zip file from https://pharo.org (32-bit or 64-bit).  [Future versions of this scirpt will automate downloading the zip file for you.]  
 
-When run without any arguments, it will print a comprehensive usage and quit.  Adding `-n` or `-u` will trigger the actual installation: 
+The location of the zip file, whether or not it's been unzipped, etc. are not important, as this script will perform a search for appropriately-named zip files and unzipped Pharo Launcher directories on your system.
 
-`$ bash install-pharolauncher.sh -u`
+You can either allow the installer script to search through a default set of directories for installation zip files/directories, or you can explicitly specify where to find them on the command line.
 
-You will likely be prompted for your password to enable `sudo` (as it will want to install 32-bit support libraries on 64-bit Ubuntu systems, which will allow you to run 32-bit Pharo images).
+Similarly, you can allow the installer script to install to a default directory, or you can explicity specify the destination directory on the command line.
 
-The `install-pharolauncher.sh` script will create a `pharolauncher` directory in the same location as the script, then unzip the contents of the downloaded zip file into this new directory.  The script will also create a "launcher" file (a `.desktop` file) and install it; this launcher can be found by searching for `pharo` in the `Show Applications` panel of Gnome.  Clicking the launcher icon will launch the Pharo-Launcher application.
+When run with `-u` or without any arguments, it will print a brief usage and quit.  When run with `-h`, it will print out a comprehensive 'help' synopsis and quit.
 
-This script requires `sudo` privileges, and can be re-run without side-effects (although you will be prompted to overwrite files from a prior installation).
+To install from a specific source, add `-i < source >`; to install to a specific destination, add `-d < destination >`.  The source can be a zip file or directory; directories will be searched.  The destination must be a writable directory.
+
+If the source file found is a zip file, it will be unzipped and the payload extracted for installation.  If more than one candidate installation source is found, a menu of choices will be presented, allowing you to select one.
+
+The script will move the selected `pharolauncher` directory to the destination folder, then create a "launcher" file (a `.desktop` file) and install it to `~/.local/share/applications`; this launcher can be found by searching for `pharo` in the `Show Applications` panel of Gnome.  Clicking the installed launcher icon will launch the Pharo-Launcher application.
+
+This script can be re-run without side-effects.  If the destination directory already exists, you will be prompted to give permission to overwrite existing files.
 
 ### Pharo-Adjust-Cursor
 

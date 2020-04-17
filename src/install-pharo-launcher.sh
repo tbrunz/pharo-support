@@ -85,6 +85,10 @@ ${USAGE_PROMPT}
     This installer will also create a '.desktop' file for the installed Pharo
     Launcher application, saved to the '~/.local/share/applications' folder.
 
+    Feel free to edit this script to change the defaults; all parameters
+    that the user is intended to modify are at the top of this script in the
+    first section before this help prompt.
+
     Pharo is an open-source programming language that is dynamic, object-
     oriented, and reflective.  Pharo was inspired by the Smalltalk IDE &
     programming language, with updates & extentions for modern systems.
