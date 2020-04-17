@@ -710,7 +710,7 @@ Install_Pharo_Launcher () {
     local TEST_FILE_NAME
 
     # We need the name of the source directory that we'll be moving.
-    BASE_DIRECTORY=$( "${INSTALL_PATH}" )
+    BASE_DIRECTORY=$( basename "${INSTALL_PATH}" )
 
     # And append it to the destination directory path so we can test it.
     DEST_FINAL_PATH=${DESTINATION_PATH}/${BASE_DIRECTORY}
@@ -723,7 +723,7 @@ Install_Pharo_Launcher () {
 
         # Is it the same as the source?  Test this by creating a temp
         # "test file" and seeing it also appears in the source directory.
-        TEST_FILE=$( mktemp -p "${DEST_FINAL_PATH}" &>/dev/null )
+        TEST_FILE=$( mktemp -p "${DEST_FINAL_PATH}" 2>/dev/null )
 
         # If this doesn't succeed, we have a system error.
         (( $? == 0 )) || Error_Linux_Command_Failure "mktemp"
@@ -748,6 +748,7 @@ Install_Pharo_Launcher () {
         Warn_Cant_Write_Destination "${DEST_FINAL_PATH}" && die $BAD_DIR
     fi
 
+    # Test again if the destination exists: If so, we know it's writable.
     if [[ -d "${DEST_FINAL_PATH}" ]]; then
         # The destination directory exists and is writable, and is
         # not the same as the source.  We need permission to replace it.
@@ -764,6 +765,9 @@ Install_Pharo_Launcher () {
     (( $? == 0 )) || \
         ( Warn_Cant_Move_Installer "${INSTALL_PATH}" \
             "${DESTINATION_PATH}" && die $CMD_FAIL )
+
+    # If we get to this point, everything worked -- Tell the user!
+    echo "Successfully installed Pharo Launcher to '${DEST_FINAL_PATH}'."
 }
 
 
@@ -1324,6 +1328,10 @@ Main () {
 
     # Using the list of candidates, install per the user's wishes.
     Install_Pharo_Launcher
+    (( $? == 0 )) || return $CANT_CREATE
+
+    # Having succeeded, create a '.desktop' file.
+    Create_Desktop_File
 }
 
 Main "$@" || die
