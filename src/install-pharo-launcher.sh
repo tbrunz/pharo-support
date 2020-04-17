@@ -250,6 +250,46 @@ Warn_of_Bad_Destination () {
 
 ###############################################################################
 #
+# Warn if a temporary directory could not be created.
+#
+Warn_of_No_Temp_Directory () {
+
+    Display_Error "Cannot create a temporary directory (in /tmp)!"
+}
+
+
+###############################################################################
+#
+# Warn if an 'unzip' app was not found and could not be installed.
+#
+Warn_of_No_Unzip_App () {
+
+    Display_Error "Cannot find or install an unzip application!"
+}
+
+
+###############################################################################
+#
+# Warn if a repository package manager could not be found.
+#
+Warn_of_No_Repo_Install_App () {
+
+    Display_Error "Cannot find a package install application!"
+}
+
+
+###############################################################################
+#
+# Warn if the ZIP package file could not be unzipped.
+#
+Warn_Cannot_Unzip_File () {
+
+    Display_Error "Cannot unzip the application ZIP file!"
+}
+
+
+###############################################################################
+#
 # Notify the user of what's likely a programming bug: Bad/missing arguments.
 #
 Warn_of_Bad_Argument () {
@@ -278,19 +318,15 @@ Warn_of_Bad_Return_Code () {
 #
 # Warn about directories that we don't have write permission for.
 #
-Warn_of_Directory_Not_Writable () {
-    local SCRIPT_PATH=${1}
-    local SCRIPT_DIR
+Warn_Cant_Write_Destination () {
+    local DIR_PATH=${1}
     local ERROR_MSG
 
-    if [[ -n "${SCRIPT_PATH}" ]]; then
-        SCRIPT_DIR="directory '$( dirname "${SCRIPT_PATH}" )'"
-    else
-        SCRIPT_DIR="<argument not provided>"
-    fi
+    [[ -n "${DIR_PATH}" ]] || \
+        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
 
     printf -v ERROR_MSG "%s " \
-        "Cannot write/delete files in ${SCRIPT_DIR}, Skipping..."
+        "Cannot write to '${DIR_PATH}'; unable to continue..."
 
     Display_Error "${ERROR_MSG}"
 }
@@ -298,100 +334,60 @@ Warn_of_Directory_Not_Writable () {
 
 ###############################################################################
 #
-# Warn about directories that aren't Pharo apps, yet have no subdirectories.
+# Warn about directories that we don't have write permission for.
 #
-Warn_If_Not_Pharo_Directory () {
-    local THIS_DIR=${1}
+Warn_Cant_Remove_Directory () {
+    local DIR_PATH=${1}
     local ERROR_MSG
 
-    if [[ -n "${THIS_DIR}" ]]; then
-        THIS_DIR="'${THIS_DIR}'"
-    else
-        THIS_DIR="<argument not provided>"
-    fi
+    [[ -n "${DIR_PATH}" ]] || \
+        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+
+    printf -v ERROR_MSG "%s " \
+        "Cannot delete '${DIR_PATH}'; unable to continue..."
+
+    Display_Error "${ERROR_MSG}"
+}
+
+
+###############################################################################
+#
+# Warn about inability to move a directory.
+#
+Warn_Cant_Move_Installer () {
+    local SOURCE_PATH=${1}
+    local DEST_PATH=${2}
+    local ERROR_MSG
+
+    [[ -n "${SOURCE_PATH}" && -n "${DEST_PATH}" ]] || \
+        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+
+    printf -v ERROR_MSG "%s \n%s " \
+        "Unable to move source directory '${SOURCE_PATH}'" \
+        "to destination directory '${DEST_PATH}' !"
+
+    Display_Error "${ERROR_MSG}"
+}
+
+
+###############################################################################
+#
+# Warn about the source and destination directories being the same.
+#
+Warn_Nothing_to_Do () {
+    local SOURCE_PATH=${1}
+    local DEST_PATH=${2}
+    local ERROR_MSG
+
+    [[ -n "${SOURCE_PATH}" && -n "${DEST_PATH}" ]] || \
+        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
 
     printf -v ERROR_MSG "%s \n%s %s " \
-        "Nothing to do!  Directory ${THIS_DIR}" \
-        "is not a Pharo application directory," \
-        "and it has no Pharo app subdirectories."
+        "Nothing to do!  Source directory '${SOURCE_PATH}'" \
+        "and destination directory '${DEST_PATH}'" \
+        "are the same directory."
 
     Display_Error "${ERROR_MSG}"
-}
-
-
-###############################################################################
-#
-# Warn if a temporary directory could not be created
-#
-Warn_of_No_Temp_Directory () {
-
-    Display_Error "Cannot create a temporary directory (in /tmp)!"
-}
-
-
-###############################################################################
-#
-# Warn if an 'unzip' app was not found and could not be installed
-#
-Warn_of_No_Unzip_App () {
-
-    Display_Error "Cannot find or install an unzip application!"
-}
-
-
-###############################################################################
-#
-# Warn if a repository package manager could not be found
-#
-Warn_of_No_Repo_Install_App () {
-
-    Display_Error "Cannot find a package install application!"
-}
-
-
-###############################################################################
-#
-# Warn if the ZIP package file could not be unzipped
-#
-Warn_Cannot_Unzip_File () {
-
-    Display_Error "Cannot unzip the application ZIP file!"
-}
-
-
-###############################################################################
-#
-# Warn about recognized Pharo app directories that have no scripts in them.
-#
-Warn_of_App_Without_Scripts () {
-    local TARGET=${1}
-    local ERROR_MSG
-
-    # Both WORKING_DIRECTORY & PHARO_APP_NAME should be defined
-    # if/when this function is called...
-    printf -v ERROR_MSG "%s %s \n%s " \
-        "Directory '${WORKING_DIRECTORY}'" \
-        "appears to be a ${PHARO_APP_NAME}" \
-        "directory, but it doesn't contain any ${TARGET}."
-
-    Display_Error "${ERROR_MSG}"
-}
-
-
-###############################################################################
-#
-# Notify the user of files that we're modifying.
-#
-Notify_of_File_Modified () {
-    local FILE_PATH=${1}
-    local EDIT_RESULT=${2}
-
-    # If there are any arguments, the first one must be a file...
-    [[ -z "${FILE_PATH}" || ! -f "${FILE_PATH}" ]] && \
-        FILE_PATH="<argument not provided>"
-
-    # Note that $2 is optional, and if missing, there is no side effect.
-    Display_Message "Editing file '${FILE_PATH}'... ${EDIT_RESULT}"
 }
 
 
@@ -684,6 +680,25 @@ Initialize_Search_Stack () {
 
 
 ###############################################################################
+#
+# The destination directory already exists; Need permission to replace it.
+#
+Get_Permission_to_Replace_Dest () {
+    local DIR_PATH=${1}
+    local PROMPT_MSG
+
+    [[ -n "${DIR_PATH}" ]] || \
+        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+
+    printf -v PROMPT_MSG "%s \n%s " \
+        "Destination directory, '${DIR_PATH}'" \
+        "already exists.  Okay to replace it?"
+
+    Get_User_Choice -y "${PROMPT_MSG}"
+}
+
+
+###############################################################################
 ###############################################################################
 #
 # Now that we have a chosen installation directory, install it.
@@ -720,7 +735,7 @@ Install_Pharo_Launcher () {
 
             # The test file is no longer relevant; remove it.
             rm -rf "${TEST_FILE}"
-            Warn_Nothing_to_Do && die
+            Warn_Nothing_to_Do "${INSTALL_PATH}" "${DEST_FINAL_PATH}" && die
         fi
 
         # The test file is no longer relevant; remove it.
@@ -730,22 +745,25 @@ Install_Pharo_Launcher () {
     elif [[ -d "${DEST_FINAL_PATH}" ]]; then
         # The destination directory exists, but it's not writable by us.
         # This means it can't be replaced, so we can't proceed.
-        Warn_Cant_Write_Destination && die $BAD_DIR
+        Warn_Cant_Write_Destination "${DEST_FINAL_PATH}" && die $BAD_DIR
     fi
 
     if [[ -d "${DEST_FINAL_PATH}" ]]; then
         # The destination directory exists and is writable, and is
         # not the same as the source.  We need permission to replace it.
-        Get_Permission_to_Replace_Dest || die
+        Get_Permission_to_Replace_Dest "${DEST_FINAL_PATH}" || die
 
         # Remove the directory we're about to create.
         rm -rf "${DEST_FINAL_PATH}"
-        (( $? == 0 )) || ( Warn_Cant_Remove_Directory && die $CMD_FAIL )
+        (( $? == 0 )) || \
+            ( Warn_Cant_Remove_Directory "${DEST_FINAL_PATH}" && die $CMD_FAIL )
     fi
 
     # Finally, since we have no destination directory, move the source.
     mv "${INSTALL_PATH}" "${DESTINATION_PATH}/"
-    (( $? == 0 )) || ( Warn_Cant_Move_Installer && die $CMD_FAIL )
+    (( $? == 0 )) || \
+        ( Warn_Cant_Move_Installer "${INSTALL_PATH}" \
+            "${DESTINATION_PATH}" && die $CMD_FAIL )
 }
 
 
