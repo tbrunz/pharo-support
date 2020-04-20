@@ -7,7 +7,7 @@
 #
 THIS_APP=$( basename ${0} '.sh' )
 
-VERSION_GREP="[[:digit:]]+[.][[:digit:]]+[.][[:digit:]]+"
+VERSION_GREP="[[:digit:]]+[.][[:digit:]]+[.]*[[:digit:]]*"
 ARCH_GREP="(x86|x64)"
 
 ZIP_FILE_ROOT_NAME_GREP="PharoLauncher-linux-${VERSION_GREP}-${ARCH_GREP}"
@@ -155,7 +155,7 @@ Display_Error () {
     fi
 
     # If $2 is not provided, resume the script after displaying the message.
-    [[ -z "${EXIT_SIGNAL}" ]] && return
+    [[ -z "${EXIT_SIGNAL}" ]] && return $SUCCESS
 
     # If $2 is defined, then quit the script, using $2 as the exit code.
     die $(( ${EXIT_SIGNAL} ))
@@ -247,7 +247,7 @@ Error_Linux_Command_Failure () {
 #
 # Notify the user that a Linux command failed unexpectedly
 #
-Warn_of_Bad_Destination () {
+Error_Bad_Destination () {
     Display_Error "Destination must be a writable directory!" $BAD_DIR
 }
 
@@ -258,7 +258,7 @@ Warn_of_Bad_Destination () {
 #
 Warn_of_No_Temp_Directory () {
 
-    Display_Error "Cannot create a temporary directory (in /tmp)!"
+    Display_Error "Cannot create a temporary directory (in /tmp)!" $CANT_CREATE
 }
 
 
@@ -268,7 +268,7 @@ Warn_of_No_Temp_Directory () {
 #
 Warn_of_No_Unzip_App () {
 
-    Display_Error "Cannot find or install an unzip application!"
+    Display_Error "Cannot find or install an unzip application!" $NOT_FOUND
 }
 
 
@@ -278,7 +278,7 @@ Warn_of_No_Unzip_App () {
 #
 Warn_of_No_Repo_Install_App () {
 
-    Display_Error "Cannot find a package install application!"
+    Display_Error "Cannot find a package install application!" $NOT_FOUND
 }
 
 
@@ -288,7 +288,7 @@ Warn_of_No_Repo_Install_App () {
 #
 Warn_Cannot_Unzip_File () {
 
-    Display_Error "Cannot unzip the application ZIP file!"
+    Display_Error "Cannot unzip the application ZIP file!" $CMD_FAIL
 }
 
 
@@ -301,7 +301,7 @@ Warn_of_Bad_Argument () {
 
     [[ -n "${FUNCTION_NAME}" ]] || FUNCTION_NAME="<unnamed function>"
 
-    Display_Error "Bad/missing arguments invoking '${FUNCTION_NAME}'!"
+    Display_Error "Bad/missing arguments invoking '${FUNCTION_NAME}'!" $BAD_ARG
 }
 
 
@@ -314,7 +314,7 @@ Warn_of_Bad_Return_Code () {
 
     [[ -n "${FUNCTION_NAME}" ]] || FUNCTION_NAME="<unnamed function>"
 
-    Display_Error "Bad return code from '${FUNCTION_NAME}'!"
+    Display_Error "Bad return code from '${FUNCTION_NAME}'!" "${2}"
 }
 
 
@@ -326,13 +326,12 @@ Warn_Cant_Write_Destination () {
     local DIR_PATH=${1}
     local ERROR_MSG
 
-    [[ -n "${DIR_PATH}" ]] || \
-        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+    [[ -n "${DIR_PATH}" ]] || Warn_of_Bad_Argument "${FUNCNAME}"
 
     printf -v ERROR_MSG "%s " \
         "Cannot write to '${DIR_PATH}'; unable to continue..."
 
-    Display_Error "${ERROR_MSG}"
+    Display_Error "${ERROR_MSG}" $BAD_DIR
 }
 
 
@@ -344,13 +343,12 @@ Warn_Cant_Remove_Directory () {
     local DIR_PATH=${1}
     local ERROR_MSG
 
-    [[ -n "${DIR_PATH}" ]] || \
-        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+    [[ -n "${DIR_PATH}" ]] || Warn_of_Bad_Argument "${FUNCNAME}"
 
     printf -v ERROR_MSG "%s " \
         "Cannot delete '${DIR_PATH}'; unable to continue..."
 
-    Display_Error "${ERROR_MSG}"
+    Display_Error "${ERROR_MSG}" $BAD_DIR
 }
 
 
@@ -364,13 +362,13 @@ Warn_Cant_Move_Installer () {
     local ERROR_MSG
 
     [[ -n "${SOURCE_PATH}" && -n "${DEST_PATH}" ]] || \
-        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+        Warn_of_Bad_Argument "${FUNCNAME}"
 
     printf -v ERROR_MSG "%s \n%s " \
         "Unable to move source directory '${SOURCE_PATH}'" \
         "to destination directory '${DEST_PATH}' !"
 
-    Display_Error "${ERROR_MSG}"
+    Display_Error "${ERROR_MSG}" $CMD_FAIL
 }
 
 
@@ -384,14 +382,14 @@ Warn_Nothing_to_Do () {
     local ERROR_MSG
 
     [[ -n "${SOURCE_PATH}" && -n "${DEST_PATH}" ]] || \
-        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+        Warn_of_Bad_Argument "${FUNCNAME}"
 
     printf -v ERROR_MSG "%s \n%s %s " \
         "Nothing to do!  Source directory '${SOURCE_PATH}'" \
         "and destination directory '${DEST_PATH}'" \
         "are the same directory."
 
-    Display_Error "${ERROR_MSG}"
+    Display_Error "${ERROR_MSG}" $CANT_CREATE
 }
 
 
@@ -402,11 +400,11 @@ Warn_Nothing_to_Do () {
 Ensure_is_a_Directory () {
 
     # $1 must be provided, and it must be a directory, else fatal error.
-    [[ -n "${1}" &&  -d "${1}" ]] && return
+    [[ -n "${1}" &&  -d "${1}" ]] && return $UCCESS
 
     [[ -d "${1}" ]] || return $BAD_DIR
 
-    Warn_of_Bad_Argument "${FUNCNAME}" && die
+    Warn_of_Bad_Argument "${FUNCNAME}"
 }
 
 
@@ -579,7 +577,7 @@ Get_User_Choice () {
         if [[ ${OPTIONS} && -n "${REPLY}" ]]; then
             isSubString "${REPLY}" "${OPTIONS}"
 
-            if (( $? == 0 )); then return
+            if (( $? == 0 )); then return $SUCCESS
             else REPLY=
             fi
         fi
@@ -691,8 +689,7 @@ Get_Permission_to_Replace_Dest () {
     local DIR_PATH=${1}
     local PROMPT_MSG
 
-    [[ -n "${DIR_PATH}" ]] || \
-        ( Warn_of_Bad_Argument "${FUNCNAME}" && die $BAD_ARG )
+    [[ -n "${DIR_PATH}" ]] || Warn_of_Bad_Argument "${FUNCNAME}"
 
     printf -v PROMPT_MSG "%s \n%s " \
         "Destination directory, '${DIR_PATH}'" \
@@ -720,10 +717,11 @@ Install_Pharo_Launcher () {
     DEST_FINAL_PATH=${DESTINATION_PATH}/${BASE_DIRECTORY}
 
     # Does it already exist?  And if so, is it writable?
-    Ensure_is_a_Writable_Directory "${DEST_FINAL_PATH}"
+    #Ensure_is_a_Writable_Directory "${DEST_FINAL_PATH}"
+    if [[ -d "${DEST_FINAL_PATH}" ]]; then
 
     # If it already exists as a writable directory, there's more checks.
-    if (( $? == 0 )); then
+    #if (( $? == 0 )); then
 
         # Is it the same as the source?  Test this by creating a temp
         # "test file" and seeing it also appears in the source directory.
@@ -739,7 +737,7 @@ Install_Pharo_Launcher () {
 
             # The test file is no longer relevant; remove it.
             rm -rf "${TEST_FILE}"
-            Warn_Nothing_to_Do "${INSTALL_PATH}" "${DEST_FINAL_PATH}" && die
+            Warn_Nothing_to_Do "${INSTALL_PATH}" "${DEST_FINAL_PATH}"
         fi
 
         # The test file is no longer relevant; remove it.
@@ -749,7 +747,7 @@ Install_Pharo_Launcher () {
     elif [[ -d "${DEST_FINAL_PATH}" ]]; then
         # The destination directory exists, but it's not writable by us.
         # This means it can't be replaced, so we can't proceed.
-        Warn_Cant_Write_Destination "${DEST_FINAL_PATH}" && die $BAD_DIR
+        Warn_Cant_Write_Destination "${DEST_FINAL_PATH}"
     fi
 
     # Test again if the destination exists: If so, we know it's writable.
@@ -761,14 +759,28 @@ Install_Pharo_Launcher () {
         # Remove the directory we're about to create.
         rm -rf "${DEST_FINAL_PATH}"
         (( $? == 0 )) || \
-            ( Warn_Cant_Remove_Directory "${DEST_FINAL_PATH}" && die $CMD_FAIL )
+            Warn_Cant_Remove_Directory "${DEST_FINAL_PATH}"
+    
+    # Otherwise, it doesn't exist; what about its parent directory?
+    elif [[ ! -d "${DESTINATION_PATH}" ]]; then
+        
+        # It doesn't exist, so ask to create it.
+        Get_User_Choice -y "Create '${DEST_FINAL_PATH}'?"
+        
+        (( $? == 0 )) || Warn_Cant_Move_Installer "${INSTALL_PATH}" \
+            "${DESTINATION_PATH}"
+        
+        # We have permission to create the destination.
+        mkdir -p "${DESTINATION_PATH}"
+        
+        (( $? == 0 )) || Warn_Cant_Move_Installer "${INSTALL_PATH}" \
+            "${DESTINATION_PATH}"
     fi
 
     # Finally, since we have no destination directory, move the source.
     mv "${INSTALL_PATH}" "${DESTINATION_PATH}/"
     (( $? == 0 )) || \
-        ( Warn_Cant_Move_Installer "${INSTALL_PATH}" \
-            "${DESTINATION_PATH}" && die $CMD_FAIL )
+        Warn_Cant_Move_Installer "${INSTALL_PATH}" "${DESTINATION_PATH}"
 
     # If we get to this point, everything worked -- Tell the user!
     echo "Successfully installed Pharo Launcher to '${DEST_FINAL_PATH}'."
@@ -920,14 +932,14 @@ Resolve_Installer_Zip_File () {
     [[ "${BASE_NAME}" =~ ${ZIP_FILE_ROOT_NAME_GREP} ]] || return $NO_MATCH
 
     # It's one of our zip files...  We need to have 'unzip' installed.
-    Ensure_Unzip_Installed || ( Warn_of_No_Unzip_App && die $NOT_FOUND )
+    Ensure_Unzip_Installed || Warn_of_No_Unzip_App
 
     # We also need a temporary directory to unzip it into.
     ZIP_FILE_PATH=${THIS_SEARCH_PATH}
     THIS_SEARCH_PATH=$( mktemp -q -d )
 
     # We need to have acquired a temp directory.
-    (( $? == 0 )) || ( Warn_of_No_Temp_Directory && die $CANT_CREATE )
+    (( $? == 0 )) || Warn_of_No_Temp_Directory
 
     # Remember this directory path, so we can remove it when we're done.
     TEMPORARY_DIRS+=( "${THIS_SEARCH_PATH}" )
@@ -937,7 +949,7 @@ Resolve_Installer_Zip_File () {
         -d "${THIS_SEARCH_PATH}" &>/dev/null
 
     # We need to have successfully unzipped the zip package.
-    (( $? == 0 )) || ( Warn_Cannot_Unzip_File && die $CMD_FAIL )
+    (( $? == 0 )) || Warn_Cannot_Unzip_File
 
     # Since this worked, return with $THIS_SEARCH_PATH pointing to the
     # directory containing the ZIP file contents; $THIS_DISPLAY_PATH does
@@ -1152,11 +1164,11 @@ Process_Switch () {
     SWITCH=${SWITCH,,}
 
     # If ARG2 is also a switch, ignore it & return the ARG1 switch.
-    [[ "${ARG2:0:1}" == "-" ]] && return
+    [[ "${ARG2:0:1}" == "-" ]] && return $SUCCESS
 
     # If the switch is a type that does not have an argument, return it.
-    [[ "${SWITCH}" == 'u' ]] && return
-    [[ "${SWITCH}" == 'h' ]] && return
+    [[ "${SWITCH}" == 'u' ]] && return $SUCCESS
+    [[ "${SWITCH}" == 'h' ]] && return $SUCCESS
 
     # Then this is a switch that must have an argument, so consume ARG2.
     PARAMETER=${ARG2}
@@ -1178,7 +1190,7 @@ Parse_Parameters () {
     # If this is not a switch, return it as a parameter & ignore ARG2.
     if [[ "${ARG1:0:1}" != "-" ]]; then
         PARAMETER=${ARG1}
-        return
+        return $SUCCESS
     fi
 
     # Remove the leading '-'.
@@ -1187,7 +1199,7 @@ Parse_Parameters () {
     # If the parameter starts with only one '-', it's a standalone switch.
     if [[ "${ARG1:0:1}"  != '-' ]]; then
         Process_Switch "${ARG1}" "${ARG2}"
-        return
+        return $SUCCESS
     fi
 
     # Remove the second '-'.
@@ -1206,7 +1218,7 @@ Parse_Parameters () {
 
             # We must NOT shift twice, since we split ARG1 in this case.
             DOUBLE_SHIFT=""
-            return
+            return $SUCCESS
         fi
     done
 
@@ -1306,8 +1318,8 @@ Validate_User_Inputs () {
     [[ -n "${DESTINATION_PATH}" ]] || DESTINATION_PATH=${DEFAULT_DESTINATION}
 
     # The destination path must be a directory.
-    Ensure_is_a_Writable_Directory "${DESTINATION_PATH}" || \
-        ( Warn_of_Bad_Destination && die $BAD_DIR )
+    #Ensure_is_a_Writable_Directory "${DESTINATION_PATH}" || \
+    #    ( Error_Bad_Destination && die $BAD_DIR )
 }
 
 
