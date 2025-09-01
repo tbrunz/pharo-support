@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Name=Pharo Launcher
+GenericName=Smalltalk
+Exec=${INSTALL_DIR}/pharo-launcher/pharo-launcher-ui %U
+Icon=${INSTALL_DIR}/pharo-launcher/icons/pharo-launcher.png
+Type=Application
+Terminal=false
+Keywords=Smalltalk
+Categories=Programming;
+Comment=Run Pharo Launcher application
+
+[Desktop Action Manager]
+Exec=pharo-launcher-ui
+Name=Open Pharo Launcher
